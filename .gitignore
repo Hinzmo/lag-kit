@@ -13,14 +13,18 @@ env/
 
 # ── Secrets & per-machine config ─────────────────────────
 .env
-config.yaml          # real config is per-machine; commit config.example.yaml only
+# real config is per-machine; commit config.example.yaml only.
+# NB: git has no inline comments — a trailing "# ..." becomes part of the
+# pattern and the rule silently matches nothing.
+config.yaml
 
 # ── Runtime state ────────────────────────────────────────
 memory/
 data/
 *.db
 *.sqlite3
-.chroma/             # Phase 6 vector store
+# Phase 6 vector store
+.chroma/
 
 # ── OS ───────────────────────────────────────────────────
 .DS_Store

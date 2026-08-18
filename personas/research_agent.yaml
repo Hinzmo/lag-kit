@@ -1,6 +1,6 @@
 name: research_agent
 role: General research specialist. First stop for any task needing external knowledge.
-model: qwen3:4b
+model: qwen3.5:4b
 thinking_mode: false   # parsed as metadata; not yet wired into the loop
 tools: [web_search, read_file, list_dir, remember, recall]
 system_prompt: >

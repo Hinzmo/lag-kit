@@ -1,6 +1,6 @@
 name: senior_dev_agent
 role: Code review and quality. Reasons over correctness, edge cases, and design.
-model: qwen3:8b
+model: ministral-3:8b
 thinking_mode: true
 tools: [read_file, list_dir, run_shell]
 system_prompt: >

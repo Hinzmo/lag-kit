@@ -1,6 +1,6 @@
 name: analyst_agent
 role: Technical analysis of data, logs, and agent output.
-model: qwen3:4b
+model: qwen3.5:4b
 thinking_mode: true
 tools: [read_file, list_dir, run_shell, remember, recall]
 system_prompt: >

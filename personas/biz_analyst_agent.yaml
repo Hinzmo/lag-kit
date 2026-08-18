@@ -1,6 +1,6 @@
 name: biz_analyst_agent
 role: Requirements, specs, and stakeholder-facing language.
-model: qwen3:4b
+model: qwen3.5:4b
 thinking_mode: false
 tools: [read_file, write_file, remember, recall]
 system_prompt: >

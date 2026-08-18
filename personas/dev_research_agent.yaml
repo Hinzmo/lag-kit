@@ -1,6 +1,6 @@
 name: dev_research_agent
 role: Technical research scoped to docs, repos, library APIs, and stack decisions.
-model: qwen2.5-coder:7b
+model: qwen3.5:4b
 thinking_mode: false
 tools: [web_search, read_file, list_dir]
 system_prompt: >

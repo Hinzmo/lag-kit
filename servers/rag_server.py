@@ -30,7 +30,11 @@ from pathlib import Path
 
 import chromadb
 import ollama
-from mcp.server.fastmcp import FastMCP
+try:
+    # mcp >= 2.0: FastMCP was renamed MCPServer (see servers/tools_server.py).
+    from mcp.server.mcpserver import MCPServer as _Server
+except ImportError:  # mcp 1.x
+    from mcp.server.fastmcp import FastMCP as _Server
 
 # ────────────────────────────────────────────────────────────────────────────
 # INGEST: Document loading, chunking, embedding, storage
@@ -225,7 +229,7 @@ def search_knowledge_base(query: str, k: int = 5) -> str:
 
 
 # Boot the MCP server
-mcp = FastMCP("lag-rag")
+mcp = _Server("lag-rag")
 mcp.tool()(search_knowledge_base)
 
 

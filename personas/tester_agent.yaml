@@ -1,6 +1,6 @@
 name: tester_agent
 role: Writes and runs tests against implemented code.
-model: qwen2.5-coder:7b
+model: qwen3.5:4b
 thinking_mode: false
 tools: [read_file, write_file, list_dir, run_shell]
 system_prompt: >

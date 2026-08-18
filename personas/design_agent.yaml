@@ -1,6 +1,6 @@
 name: design_agent
 role: UI design decisions, scoped to text-describable specs (no vision).
-model: qwen3:4b
+model: qwen3.5:4b
 thinking_mode: false
 tools: [read_file, write_file]
 system_prompt: >
