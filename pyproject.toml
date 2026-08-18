@@ -11,7 +11,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-rag = ["chromadb>=0.5"]   # Phase 6 — vector store
+rag = ["chromadb>=0.5", "ollama>=0.4"]   # Phase 6 — vector store + local embeddings
 dev = ["pytest>=8.0"]
 
 [project.scripts]
