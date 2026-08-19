@@ -26,6 +26,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import sys
 from pathlib import Path
 
 import chromadb
@@ -69,6 +70,8 @@ def chunk_text(text: str, chunk_size: int = 500, overlap: int = 100) -> list[str
     at ~4 chars/token, that's ~2000 char chunks with ~400 char overlap.
     """
     char_size = chunk_size * 4  # rough heuristic
+    # The stride must advance, or the loop below never terminates.
+    stride = max(char_size - overlap, 1)
     chunks = []
     start = 0
     text = re.sub(r"\s+", " ", text)  # normalize whitespace
@@ -77,7 +80,11 @@ def chunk_text(text: str, chunk_size: int = 500, overlap: int = 100) -> list[str
         chunk = text[start:end].strip()
         if chunk:
             chunks.append(chunk)
-        start = end - overlap
+        if end == len(text):
+            # Final chunk. Without this, `start` rewinds to end - overlap, which
+            # is still < len(text), and we re-emit the same tail chunk forever.
+            break
+        start += stride
     return chunks
 
 
@@ -255,7 +262,10 @@ def main():
         global _engine
         _engine = RAGEngine(db_path=args.db, model=args.embed_model,
                            host=args.ollama_host)
-        print(f"RAG engine initialized: {args.db}")
+        # stderr, not stdout: stdout *is* the JSON-RPC transport under the stdio
+        # transport, so anything printed there corrupts the stream and the
+        # client's initialize handshake fails.
+        print(f"RAG engine initialized: {args.db}", file=sys.stderr)
         mcp.run()  # stdio transport
 
 

@@ -12,34 +12,67 @@ This is the **v2 rebuild**. v1 faked the tool layer with a direct-dispatch HTTP/
 shim; v2's whole point is a *real* MCP boundary — tools live in separate server processes,
 discovered at runtime via `tools/list`, reusable by any MCP client.
 
-## Repo state — read this before touching anything
+## Repo state
 
-This tree is a **partial reconstruction after the previous machine was wiped**. The source
-arrived as a flat `files.zip` dump and has been moved into the layout below; `files.zip` is
-kept at the root as the recovery archive. Assume gaps between what the docs claim exists and
-what's actually on disk — verify before trusting either.
+Recovered, committed, pushed, and — as of 2026-08-19 — **actually running**. All six phases
+are smoke-tested end to end on this machine, including RAG.
 
 ```
 src/lag/     config.py  tools.py  ollama_client.py  mcp_client.py  swarm.py  cli.py
-servers/     tools_server.py
-personas/    (empty)
-tests/       (empty)
+servers/     tools_server.py  rag_server.py
+personas/    nine YAMLs
+tests/       64 tests, all passing
+docs/        RAG_SETUP.md  VECTORS_AND_SEARCH.md
 ```
 
-- **No commits exist yet.** Everything is staged but uncommitted. `git config user.email` is
-  unset, so commits will fail until it's configured; the current branch is `master` while
-  `init.defaultBranch` is `main`. See `MORNING_BRIEF.md` §1 for the intended setup.
-- **`.venv/` has only pip.** No `ollama`, `mcp`, `pyyaml`, or `typer` installed.
-- **`personas/` is empty — the nine persona YAMLs were lost in the wipe.** The morning brief
-  lists Phase 5 as done, but they aren't in `files.zip` and aren't on disk. `lag swarm`
-  cannot run until they're rewritten. `config.load_persona` expects `personas/<name>.yaml`
-  with at least `name`, `model`, and `system_prompt` keys (`swarm.Agent.__init__`); the named
-  crew is `architect_agent`, `dev_agent`, `senior_dev_agent`, `design_agent`.
-- **`servers/rag_server.py` does not exist.** Phase 6 is unstarted.
-- **Nothing has ever been run.** The code was written in an environment with no Ollama, so
-  it is syntax-checked only. Treat everything as unverified until smoke-tested.
-- **`MORNING_BRIEF.md` is from mid-June 2026.** Good record of intent and of the deliberate
-  trade-offs; its "today's targets" are stale, not a live plan.
+Remote: `github.com/Hinzmo/local-agent-kit` (private). Branch `main`.
+
+### History worth knowing
+
+The tree was rebuilt after the previous machine was wiped, initially from a partial
+`files.zip` (2026-06-16). A **complete** archive later turned up at
+`~/Downloads/local-agent-kit-v2-complete.zip` (2026-06-18) holding the nine personas,
+`rag_server.py`, and `docs/` — so nothing was lost after all. All shared source was
+byte-identical between the two; the newer archive was a strict superset.
+
+Both `MORNING_BRIEF.md` and `REBUILD_COMPLETE.md` are **June 2026 documents**: reliable on
+design intent and deliberate trade-offs, stale on status. `MORNING_BRIEF.md` §5 claims the
+`lag` entry point "isn't registering cleanly" — that was the broken venv below, not a code
+defect. It registers fine.
+
+### Environment landmines (cost hours; don't rediscover them)
+
+- **Always run through `.venv/bin/`, and clear the snap's env vars.** Claude Code runs under
+  snap confinement, which exports `PIP_PREFIX=/home/hinzmo/snap/claude-code/common` and a
+  `PYTHONPATH` pointing at snap site-packages. `PIP_PREFIX` silently redirects every
+  `pip install` out of the venv, so installs "succeed" and imports still fail. Use:
+
+  ```bash
+  env -u PIP_PREFIX -u PYTHONPATH -u PIP_BREAK_SYSTEM_PACKAGES .venv/bin/python -m pip install -e ".[dev]"
+  env -u PYTHONPATH .venv/bin/lag run "..."
+  env -u PYTHONPATH .venv/bin/python -m pytest
+  ```
+
+- **`python3-venv` is not installed** and `/usr/bin/python3` has no `pip`. The venv here was
+  bootstrapped with `python3 -m venv --without-pip` + `get-pip.py`. Recreating it needs the
+  same dance (or `sudo apt install python3.12-venv`).
+- The original `.venv` was built for **Python 3.14** on the old machine; this box has 3.12,
+  so its `site-packages` was invisible to the interpreter. It has been rebuilt against 3.12.
+- **`ssh` and `~/.ssh` are unreachable** from inside the snap. Use `gh` (authenticated, HTTPS)
+  for anything GitHub, or have the user run ssh commands themselves with the `!` prefix.
+
+### Models
+
+`config.yaml` (gitignored) is mapped to what is actually pulled here — `ministral-3:8b`
+(orchestrator) and `qwen3.5:4b` (everything else). The nine personas were likewise remapped
+off `qwen3:8b` / `qwen3:4b` / `qwen2.5-coder:7b`, none of which are installed. `deepseek-r1:8b`
+is present but deliberately unmapped: R1 distills make poor orchestrators here (weak
+structured output, thinking tokens wreck loop latency).
+
+`nomic-embed-text` is pulled, and `.chroma/` holds an ingest of `docs/` (9 chunks).
+
+Note: `ollama` is **not on PATH** inside the snap sandbox. Drive it over HTTP
+(`http://localhost:11434/api/pull`, `/api/tags`) or have the user run it in their own shell.
 
 ## Architecture
 
@@ -93,28 +126,46 @@ persistent asyncio loop on a daemon thread, calls marshalled over with
 `run_coroutine_threadsafe`. The context managers (`stdio_client`, `ClientSession`) are
 entered *manually* via `__aenter__` so the session and server subprocess outlive `_connect`.
 
-This is the known rough edge. **If `--mcp` hangs, `MCPBridge._connect` is the first
-suspect.** The cleaner refactor is keeping the whole run inside `async with` blocks.
+This is the known rough edge, and the historical "`--mcp` hangs" symptom traced to it — but
+the cause was *not* the manual `__aenter__`. The server was spawned with a bare `"python"`,
+which does not exist on this box; it died on import and `stdio_client` waited forever on a
+pipe that never spoke. Now fixed via `sys.executable` (see `MCPToolProvider.from_config`).
+
+Two residual rough edges remain, both real:
+
+- `MCPBridge` never shuts down. There's no `close()`, so the server subprocess and the daemon
+  event loop leak for the process lifetime. Fine for one-shot CLI runs; a problem the moment
+  something long-lived holds a bridge. The cleaner refactor is still keeping the whole run
+  inside `async with` blocks.
+- If the server dies at startup, the failure surfaces as `MCPError: Connection closed` with no
+  hint of the child's stderr. When debugging `--mcp`, **run the server standalone first** —
+  `env -u PYTHONPATH .venv/bin/python servers/tools_server.py` — where the real traceback shows.
 
 ## Commands
 
+Prefixes matter here — see the environment landmines above.
+
 ```bash
-cp config.example.yaml config.yaml    # per-machine; gitignored
-pip install -e .                      # core
-pip install -e ".[rag]"               # + chromadb, Phase 6
-pip install -e ".[dev]"               # + pytest
+# install (note the unset vars; PIP_PREFIX will otherwise redirect out of the venv)
+env -u PIP_PREFIX -u PYTHONPATH -u PIP_BREAK_SYSTEM_PACKAGES \
+    .venv/bin/python -m pip install -e ".[dev]"     # core + pytest
+#   ...install -e ".[rag]"                          # + chromadb, Phase 6
 
-ollama pull qwen3:4b                  # or whatever `models.worker` is set to
+env -u PYTHONPATH .venv/bin/lag run "list the files here and tell me what this project is"
+env -u PYTHONPATH .venv/bin/lag run "same thing" --mcp     # routes through the MCP server
+env -u PYTHONPATH .venv/bin/lag swarm "design a tiny URL shortener" --mode crew
 
-lag run "list the files here and tell me what this project is"
-lag run "same thing" --mcp            # routes through the MCP server
-lag swarm "design a tiny URL shortener" --mode crew   # pipeline | parallel | crew
+env -u PYTHONPATH .venv/bin/python servers/tools_server.py  # standalone; shows real tracebacks
+env -u PYTHONPATH .venv/bin/python -m pytest
 
-python servers/tools_server.py                                  # run the server standalone
-npx @modelcontextprotocol/inspector python servers/tools_server.py   # poke it interactively
-
-pytest
+ollama pull nomic-embed-text          # required before Phase 6
 ```
+
+`cp config.example.yaml config.yaml` if starting on a new machine — but note the example
+names models that are not pulled here.
+
+Runs are slow: CPU-only inference, ~1–3 min for a single tool-calling round trip, and a
+four-call `crew` run takes considerably longer. Background long runs rather than waiting.
 
 ## Config
 
@@ -130,6 +181,29 @@ loop latency.
 - `parallel` — all agents run the task concurrently via `ThreadPoolExecutor`; outputs concatenated.
 - `crew` — first agent coordinates: decompose → delegate to specialists → synthesize.
 
+## Phase 6 — RAG (`servers/rag_server.py`)
+
+Verified working: `--ingest` chunks and embeds via `nomic-embed-text`, and
+`search_knowledge_base` answers over the real MCP boundary.
+
+```bash
+env -u PYTHONPATH .venv/bin/python servers/rag_server.py --ingest docs/
+env -u PYTHONPATH .venv/bin/python servers/rag_server.py     # server mode
+```
+
+Two traps already hit and fixed here, worth remembering if you write another server:
+
+- **`chunk_text` had a non-terminating loop.** On the final chunk `start` rewound to
+  `end - overlap`, still `< len(text)`, so it re-emitted the same tail until memory ran out —
+  every ingest hung. Now strides forward and breaks at the end.
+- **Server mode printed to stdout.** Under the stdio transport stdout *is* the JSON-RPC
+  channel, so any stray `print` corrupts the stream and `initialize` fails. Diagnostics go to
+  stderr. This applies to every MCP server in this repo.
+
+**Not wired into the harness yet.** `MCPToolProvider.from_config` spawns only
+`tools_server.py`. Serving both means spawning both and merging their schemas — the
+`schemas()`/`call()` interface already supports it; nothing in the loop needs to change.
+
 ## Known loose ends
 
 These are deliberate, documented in `files/MORNING_BRIEF.md` §4 — not bugs to chase blindly:
@@ -141,9 +215,17 @@ These are deliberate, documented in `files/MORNING_BRIEF.md` §4 — not bugs to
   "fix" this without asking; it's a deferred decision, not an oversight.
 - **`thinking_mode` in personas is metadata only** — parsed but never passed to
   `ollama.chat(think=...)`. Wiring it is ~2 lines in `ollama_client.py`.
-- **`mcp` SDK version churn.** The official SDK ships FastMCP as its high-level interface,
-  but a v2 alpha is in flight and FastMCP 3.0 shifted decorator ergonomics. Run
-  `pip show mcp` and sanity-check against any tutorial before copying its API.
+- **`mcp` SDK version churn — this landed.** The installed SDK is **mcp 2.0.0**, which renamed
+  two things the kit depended on:
+
+  | mcp 1.x | mcp 2.x |
+  |---|---|
+  | `mcp.server.fastmcp.FastMCP` | `mcp.server.mcpserver.MCPServer` |
+  | `Tool.inputSchema` | `Tool.input_schema` |
+
+  Both servers import either via a `try/except ImportError`, and `mcp_client._input_schema`
+  accepts both spellings, so the kit runs on 1.x and 2.x. `.tool()` and `.run()` ergonomics
+  are unchanged. Any tutorial you copy from is probably still on 1.x — check `pip show mcp`.
 
 ## Conventions
 
@@ -152,6 +234,9 @@ These are deliberate, documented in `files/MORNING_BRIEF.md` §4 — not bugs to
 - Tool functions need Google-style `Args:` docstrings — they become the schema descriptions
   the model reads.
 - Real config (`config.yaml`), `memory/`, `data/`, and `.chroma/` are gitignored. Commit
-  `config.example.yaml` only.
+  `config.example.yaml` only. **Never put a trailing `# comment` on a `.gitignore` pattern** —
+  git has no inline comments, so the comment becomes part of the pattern and the rule matches
+  nothing. `config.yaml` and `.chroma/` were both silently untracked-in-name-only this way;
+  verify any new rule with `git check-ignore -v <path>`.
 - Privacy stance is load-bearing here ("your data never leaves the machine"). Don't introduce
   cloud calls, telemetry, or API-key-requiring dependencies.
