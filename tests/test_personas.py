@@ -69,11 +69,61 @@ def test_research_personas_are_no_longer_degraded():
         assert "web_search" in TOOLS
 
 
+CFG = {
+    "paths": {"personas": str(PERSONA_DIR)},
+    "models": {"orchestrator": "big:8b", "worker": "small:4b",
+               "coder": "code:7b", "fast": "tiny:3b", "embed": "embed"},
+}
+
+
 def test_load_persona_reads_from_configured_dir():
     from lag.config import load_persona
 
-    cfg = {"paths": {"personas": str(PERSONA_DIR)}}
-    assert load_persona("architect_agent", cfg)["name"] == "architect_agent"
+    assert load_persona("architect_agent", CFG)["name"] == "architect_agent"
+
+
+class TestModelRoles:
+    """Personas name a role; config.yaml owns the actual model tags.
+
+    This is what lets the Mac and the CPU-only box share personas while running
+    different models — and it is why the persona files no longer need editing
+    when a model is swapped.
+    """
+
+    def test_role_resolves_through_config(self):
+        from lag.config import load_persona
+
+        assert load_persona("architect_agent", CFG)["model"] == "big:8b"
+        assert load_persona("dev_agent", CFG)["model"] == "code:7b"
+        assert load_persona("research_agent", CFG)["model"] == "small:4b"
+
+    def test_every_persona_resolves(self):
+        from lag.config import load_persona
+
+        for p in PERSONA_FILES:
+            assert ":" in load_persona(p.stem, CFG)["model"]
+
+    def test_literal_tag_still_passes_through(self):
+        """Older personas that hardcode a tag must keep working."""
+        from lag.config import resolve_model
+
+        assert resolve_model("qwen3.5:4b", CFG) == "qwen3.5:4b"
+
+    def test_mistyped_role_fails_loudly(self):
+        """Better than a confusing 404 from Ollama at run time."""
+        from lag.config import resolve_model
+
+        with pytest.raises(ValueError, match="not a role"):
+            resolve_model("codr", CFG)
+
+    def test_swapping_a_model_moves_every_agent_on_that_role(self):
+        from lag.config import load_persona
+
+        swapped = {**CFG, "models": {**CFG["models"], "coder": "newcoder:14b"}}
+        movers = ["dev_agent", "tester_agent", "dev_research_agent"]
+        assert all(load_persona(m, swapped)["model"] == "newcoder:14b" for m in movers)
+        # agents on other roles are unaffected
+        assert load_persona("architect_agent", swapped)["model"] == "big:8b"
 
 
 def test_load_persona_raises_for_missing():

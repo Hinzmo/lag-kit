@@ -226,6 +226,15 @@ everything, so a core install without the `[rag]` extra still remembers.
 Chunk ids are content-addressed and namespaced per writer (`chunk_*` vs `mem_*`). Never go
 back to positional ids — `chunk_<i>` made a second ingest overwrite the first.
 
+## Model roles
+
+`models:` in `config.yaml` is the **only** place model tags live. Personas name a role
+(`model: coder`) which `config.resolve_model` maps to a tag; a literal tag still passes
+through. Never hardcode a tag back into a persona — that reintroduces the drift that left all
+nine pinned to models the machine didn't have. Roles: `orchestrator` (architect, senior_dev),
+`coder` (dev, tester, dev_research), `worker` (the other four), plus unassigned `fast` and
+retrieval-only `embed`.
+
 ## Context window
 
 Ollama ignores a model's trained context and allocates **4096** by default. `ministral-3:8b`

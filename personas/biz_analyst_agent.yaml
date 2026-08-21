@@ -1,6 +1,6 @@
 name: biz_analyst_agent
 role: Requirements, specs, and stakeholder-facing language.
-model: qwen3.5:4b
+model: worker    # role -> config.yaml models.worker
 thinking_mode: false
 tools: [read_file, write_file, remember, recall]
 system_prompt: >

@@ -1,6 +1,6 @@
 name: architect_agent
 role: System design. The hardest reasoning role.
-model: ministral-3:8b
+model: orchestrator    # role -> config.yaml models.orchestrator
 thinking_mode: true
 tools: [read_file, list_dir, remember, recall]
 system_prompt: >

@@ -1,6 +1,6 @@
 name: senior_dev_agent
 role: Code review and quality. Reasons over correctness, edge cases, and design.
-model: ministral-3:8b
+model: orchestrator    # role -> config.yaml models.orchestrator
 thinking_mode: true
 tools: [read_file, list_dir, run_shell]
 system_prompt: >

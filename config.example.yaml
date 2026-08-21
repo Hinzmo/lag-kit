@@ -1,8 +1,22 @@
 # Copy to config.yaml and edit for THIS machine. config.yaml is gitignored.
 ollama_base_url: "http://localhost:11434"
 
+# These five roles are the ONLY place model names live. Personas name a role
+# ("model: coder"), so swapping a model is a one-line change here and every agent
+# on that role follows — no persona edits, and each machine can run a different
+# model set from the same personas.
+#
+# Which persona sits on which role:
+#   orchestrator  architect_agent, senior_dev_agent      (hardest reasoning)
+#   coder         dev_agent, tester_agent, dev_research_agent
+#   worker        analyst_agent, biz_analyst_agent, design_agent, research_agent
+#   fast          unassigned — free for short/cheap calls
+#   embed         retrieval only, never a chat model
+#
+# Use `ollama list` to get exact tags; a role pointing at a model you have not
+# pulled fails at run time, and a mistyped role name fails immediately at load.
 models:
-  orchestrator: "qwen3:8b"      # Mac M4: bump to qwen3:14b · ASUS (CPU): keep small
+  orchestrator: "qwen3:8b"      # Mac M4: a 14B sits here comfortably · CPU box: keep at 8B
   worker: "qwen3:4b"
   coder: "qwen2.5-coder:7b"
   fast: "llama3.2:3b"

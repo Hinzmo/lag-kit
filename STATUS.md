@@ -93,6 +93,32 @@ and every swarm agent. KV cache costs roughly **130 KB/token** for an 8B model:
 
 ---
 
+### Models live in exactly one place
+
+Personas name a **role**, not a model:
+
+```yaml
+# personas/dev_agent.yaml
+model: coder        # resolves through config.yaml → models.coder
+```
+
+So swapping a model is one line in `config.yaml` and every agent on that role
+follows — no persona edits — and each machine runs its own model set from the same
+personas. A literal tag (`qwen3.5:4b`) still passes through untouched. A mistyped role
+fails immediately at load with the valid roles listed, rather than as a confusing 404
+from Ollama mid-run.
+
+| Role | Personas on it |
+|------|----------------|
+| `orchestrator` | architect_agent, senior_dev_agent |
+| `coder` | dev_agent, tester_agent, dev_research_agent |
+| `worker` | analyst_agent, biz_analyst_agent, design_agent, research_agent |
+| `fast` | unassigned — free for short/cheap calls |
+| `embed` | retrieval only, never a chat model |
+
+**Adding a model:** `ollama pull <tag>`, then point a role at it in `config.yaml`. That's
+the whole procedure.
+
 ## Installed models (Ubuntu box)
 
 | Model | Params | Trained ctx | Role |
@@ -137,9 +163,8 @@ The repo carries everything except per-machine config, which is gitignored by de
 4. `ollama pull` the models you want, then **edit `config.yaml`**:
    - the M4 handles a larger orchestrator comfortably — `qwen3:14b` was the original intent
    - raise `num_ctx` to 16384–32768; unified memory makes this cheap
-5. **The nine personas are pinned to this box's models** (`ministral-3:8b` / `qwen3.5:4b`).
-   Either pull those on the Mac or rewrite the `model:` field in `personas/*.yaml`. This is
-   the one thing that will break a fresh clone.
+5. **Personas need no edits** — they name roles, so just point the five roles in
+   `config.yaml` at whatever you pulled. `ollama list` gives the exact tags.
 6. `ollama pull nomic-embed-text`, then `python servers/rag_server.py --ingest docs/`
 7. `pytest` — expect 100 passing.
 
