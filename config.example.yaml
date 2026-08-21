@@ -17,4 +17,15 @@ paths:
 
 ollama:
   keep_alive: "30m"             # don't pay model-swap cost every handoff
-  max_loaded_models: 2
+  max_loaded_models: 2          # advisory only; set OLLAMA_MAX_LOADED_MODELS to enforce
+
+  # Ollama ignores a model's trained context and allocates 4096 by default.
+  # ministral-3:8b is trained for 262144, so leaving this unset runs it at 1/64th
+  # of its window and silently drops the oldest tokens. With always-on retrieval
+  # plus eight tool schemas, 4096 overflows fast.
+  #
+  # KV cache costs roughly 130 KB/token for an 8B model, so:
+  #     8192  ≈ 1.0 GB   safe on a 16 GB box alongside a 6 GB model
+  #    16384  ≈ 2.1 GB   comfortable if little else is running
+  #    32768  ≈ 4.2 GB   Mac M4 territory
+  num_ctx: 8192

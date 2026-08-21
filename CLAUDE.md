@@ -204,12 +204,45 @@ Two traps already hit and fixed here, worth remembering if you write another ser
 `tools_server.py`. Serving both means spawning both and merging their schemas — the
 `schemas()`/`call()` interface already supports it; nothing in the loop needs to change.
 
+> **`STATUS.md` is the living status doc** — current state, how it works, what's left, and Mac
+> setup. Update it when behaviour changes; this file stays focused on working rules.
+
+## Memory and retrieval
+
+`remember(key, value)` writes to `memory/store.json` **and** embeds into the ChromaDB
+collection, so stored facts return from a plain question rather than only an exact `recall`.
+Indexing is the default, never a flag — a fact only `recall` can reach is one the model must
+already know it stored. Remembered chunks carry `kind: "memory"` and surface tagged
+`· remembered`.
+
+`src/lag/rag.py` owns chunking, embedding, and the collection. `servers/rag_server.py` is only
+the protocol wrapper and CLI — the same "one implementation, two consumers" rule as `tools.py`,
+because `tools.remember` is the second consumer. Don't reintroduce retrieval logic into the
+server.
+
+Indexing must stay non-fatal: `tools._index_memory` imports `lag.rag` lazily and swallows
+everything, so a core install without the `[rag]` extra still remembers.
+
+Chunk ids are content-addressed and namespaced per writer (`chunk_*` vs `mem_*`). Never go
+back to positional ids — `chunk_<i>` made a second ingest overwrite the first.
+
+## Context window
+
+Ollama ignores a model's trained context and allocates **4096** by default. `ministral-3:8b`
+is trained for 262144. Always construct clients via `OllamaClient.from_config` so
+`ollama.num_ctx` and `keep_alive` are applied; constructing `OllamaClient(...)` directly
+silently reverts to 4096 and the model starts dropping the top of its own conversation with no
+error. Budget ~130 KB/token of KV cache for an 8B model.
+
 ## Known loose ends
 
 These are deliberate, documented in `files/MORNING_BRIEF.md` §4 — not bugs to chase blindly:
 
-- **`web_search` is referenced in persona tool lists but not implemented.** The v1 DuckDuckGo
-  tool was never rebuilt; calling it returns `"unknown tool: web_search"`.
+- **`web_search` is implemented** (DuckDuckGo HTML endpoint, keyless, stdlib-only). It is the
+  one tool that leaves the machine — the query goes off-box. It scrapes markup, so it will
+  break if DuckDuckGo changes their HTML; the parser is pinned by tests against a captured
+  page, never the live network. Don't add an API-key search provider without asking; keyless
+  is what keeps the privacy stance intact.
 - **`run_shell` is unsandboxed** — `shell=True`, no path allow-list, 60s timeout. Accepted
   risk on a single-user offline box. Revisit before anything multi-user. Don't silently
   "fix" this without asking; it's a deferred decision, not an oversight.

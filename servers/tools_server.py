@@ -25,11 +25,13 @@ from lag.tools import (
     system_info,
     remember,
     recall,
+    web_search,
 )
 
 mcp = _Server("lag-tools")
 
-for _fn in (read_file, write_file, list_dir, run_shell, system_info, remember, recall):
+for _fn in (read_file, write_file, list_dir, run_shell, system_info, remember,
+            recall, web_search):
     mcp.tool()(_fn)  # FastMCP builds the schema from each function's hints + docstring
 
 if __name__ == "__main__":

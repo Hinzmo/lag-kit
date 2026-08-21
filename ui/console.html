@@ -1,0 +1,1278 @@
+<title>Phosphor Console</title>
+<style>
+/* ══════════════════════════════════════════════════════════════════════════
+   PHOSPHOR CONSOLE — operator interface for local-agent-kit (lag)
+
+   Committed single-theme: a CRT has no light mode. Every colour is painted
+   explicitly from a token so the page holds on any host ground.
+
+   Phosphor FAMILY with functional separation, not one green:
+     green   = agents / the harness
+     cyan    = MCP wire traffic (always live)
+     violet  = retrieval / RAG (always on)
+     amber   = degraded
+     magenta = fault
+   ══════════════════════════════════════════════════════════════════════════ */
+:root{
+  --void:      #04070A;
+  --panel:     #070F13;
+  --panel-2:   #091519;
+  --panel-3:   #0C1D22;
+  --rule:      #10262A;
+
+  --p-core:    #6BFFB0;
+  --p:         #22E86A;
+  --p-mid:     #14A74E;
+  --p-deep:    #0B6E3A;
+  --p-ghost:   #072A1C;
+
+  --wire:      #3BE8FF;
+  --wire-deep: #0E4F63;
+  --rag:       #B98CFF;
+  --rag-deep:  #3A2A5C;
+  --amber:     #FFB03A;
+  --amber-deep:#5C3D0E;
+  --fault:     #FF3B8A;
+
+  --ink:       #C9FFE2;
+  --ink-2:     #7FB79A;
+  --ink-3:     #4A7563;
+
+  --glow-s: 0 0 6px rgba(34,232,106,.55);
+  --glow-m: 0 0 14px rgba(34,232,106,.40);
+  --glow-w: 0 0 12px rgba(59,232,255,.45);
+  --glow-r: 0 0 12px rgba(185,140,255,.45);
+
+  --mono: ui-monospace, "SF Mono", "Cascadia Mono", "JetBrains Mono", "Roboto Mono", Menlo, Consolas, monospace;
+  --s1:4px; --s2:8px; --s3:12px; --s4:16px; --s5:24px; --s6:32px;
+}
+*{ box-sizing:border-box; }
+html,body{ height:100%; }
+body{
+  margin:0; background:var(--void); color:var(--ink);
+  font-family:var(--mono); font-size:13px; line-height:1.5;
+  overflow:hidden; -webkit-font-smoothing:antialiased;
+}
+
+/* ── ambient ────────────────────────────────────────────────────────────── */
+/* Ambient layers are isolated onto their own compositor layers so the animated
+   canvas never forces a repaint of the UI stacked above it. No blend modes:
+   mix-blend-mode over a per-frame canvas makes the compositor re-blend the whole
+   viewport every tick, which reads as flicker on some GPUs. */
+#grid{
+  position:fixed; inset:0; z-index:0; opacity:.22; pointer-events:none;
+  will-change:transform; transform:translateZ(0);
+}
+.crt{
+  position:fixed; inset:0; z-index:90; pointer-events:none;
+  background:repeating-linear-gradient(180deg,
+    rgba(0,0,0,0) 0px, rgba(0,0,0,0) 2px, rgba(0,0,0,.14) 3px, rgba(0,0,0,.14) 4px);
+  transform:translateZ(0);
+}
+.crt::after{ content:""; position:absolute; inset:0;
+  background:radial-gradient(120% 100% at 50% 45%, rgba(0,0,0,0) 45%, rgba(0,0,0,.72) 100%); }
+
+/* vfx off — kills both ambient layers outright */
+body.novfx #grid{ display:none; }
+body.novfx .crt{ display:none; }
+
+/* ── boot ───────────────────────────────────────────────────────────────── */
+#boot{ position:fixed; inset:0; z-index:120; background:var(--void);
+  display:flex; align-items:center; justify-content:center; transition:opacity .5s ease; }
+#boot.done{ opacity:0; pointer-events:none; }
+.boot-inner{ width:min(680px,88vw); }
+.boot-line{ color:var(--p); text-shadow:var(--glow-s); white-space:pre; opacity:0; }
+.boot-line.on{ opacity:1; }
+.boot-bar{ height:2px; background:var(--p-ghost); margin-top:var(--s4); overflow:hidden; }
+.boot-bar i{ display:block; height:100%; width:0; background:var(--p); box-shadow:var(--glow-m); }
+
+/* ── shell ──────────────────────────────────────────────────────────────── */
+.shell{ position:relative; z-index:10; height:100vh; display:grid; grid-template-rows:auto 1fr auto; }
+
+.masthead{
+  display:flex; align-items:center; gap:var(--s4);
+  padding:var(--s3) var(--s5); border-bottom:1px solid var(--rule);
+  background:linear-gradient(180deg, rgba(34,232,106,.05), transparent);
+}
+.wordmark{ font-size:22px; font-weight:700; letter-spacing:.42em; color:var(--p-core);
+  text-shadow:var(--glow-m); text-transform:uppercase; }
+.wordmark small{ display:block; font-size:9px; letter-spacing:.30em; color:var(--ink-3);
+  text-shadow:none; font-weight:400; margin-top:2px; }
+
+#newproj{
+  font-family:var(--mono); font-size:10px; letter-spacing:.22em; text-transform:uppercase;
+  font-weight:700; padding:9px 18px; cursor:pointer;
+  background:transparent; color:var(--p); border:1px solid var(--p);
+  box-shadow:inset 0 0 20px rgba(34,232,106,.10);
+  transition:all .18s ease;
+}
+#newproj:hover{ background:var(--p); color:var(--void); box-shadow:var(--glow-m); }
+#newproj:focus-visible{ outline:2px solid var(--p-core); outline-offset:2px; }
+
+.projchip{
+  display:none; align-items:center; gap:var(--s2);
+  border:1px solid var(--rule); border-left:2px solid var(--p);
+  padding:5px var(--s3); background:var(--panel-2); max-width:340px;
+}
+.projchip.on{ display:flex; }
+.projchip .pn{ font-size:11.5px; color:var(--ink); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.projchip .pm{ font-size:8.5px; letter-spacing:.18em; text-transform:uppercase; color:var(--ink-3); }
+.projchip button{
+  background:none; border:none; color:var(--ink-3); cursor:pointer;
+  font-family:var(--mono); font-size:13px; padding:0 2px; line-height:1;
+}
+.projchip button:hover{ color:var(--fault); }
+
+.mast-meta{ display:flex; gap:var(--s5); margin-left:auto; align-items:center; }
+.meta{ display:flex; flex-direction:column; gap:1px; }
+.meta b{ font-size:12px; color:var(--ink); font-weight:600; font-variant-numeric:tabular-nums; }
+.meta span{ font-size:8.5px; letter-spacing:.22em; color:var(--ink-3); text-transform:uppercase; }
+
+.console{ display:grid; grid-template-columns:260px minmax(0,1fr) 288px; min-height:0; }
+.rail{ display:flex; flex-direction:column; min-height:0; background:var(--panel); }
+.rail-l{ border-right:1px solid var(--rule); }
+.rail-r{ border-left:1px solid var(--rule); }
+.stage{ display:grid; grid-template-rows:auto minmax(0,1fr) auto; min-height:0; min-width:0; }
+
+.phead{
+  display:flex; align-items:center; gap:var(--s2); padding:7px var(--s3);
+  border-bottom:1px solid var(--rule); font-size:9px; letter-spacing:.26em;
+  text-transform:uppercase; color:var(--ink-3); background:var(--panel-2); flex:0 0 auto;
+}
+.phead .dot{ width:5px; height:5px; border-radius:50%; background:var(--p); box-shadow:var(--glow-s); }
+.phead .tail{ margin-left:auto; letter-spacing:.14em; font-variant-numeric:tabular-nums; }
+.phead button{
+  background:none; border:1px solid var(--rule); color:var(--ink-3); cursor:pointer;
+  font-family:var(--mono); font-size:8px; letter-spacing:.18em; text-transform:uppercase;
+  padding:2px 7px; margin-left:var(--s2);
+}
+.phead button:hover{ color:var(--ink-2); border-color:var(--p-ghost); }
+.pbody{ overflow:auto; min-height:0; flex:1 1 auto; }
+
+/* ── roster ─────────────────────────────────────────────────────────────── */
+.unit{
+  padding:var(--s3); border-bottom:1px solid var(--rule);
+  display:grid; grid-template-columns:auto 1fr; gap:var(--s3);
+  position:relative; transition:background .18s ease;
+}
+.unit::before{ content:""; position:absolute; left:0; top:0; bottom:0; width:2px;
+  background:transparent; transition:background .2s ease, box-shadow .2s ease; }
+.unit[data-state="active"]::before{ background:var(--p); box-shadow:var(--glow-m); }
+.unit[data-state="done"]::before{ background:var(--p-deep); }
+.unit[data-assigned="1"]{ background:rgba(34,232,106,.045); }
+.ring{ width:26px; height:26px; border-radius:50%; border:1.5px solid var(--p-ghost);
+  display:grid; place-items:center; font-size:9px; color:var(--ink-3); transition:all .25s ease; }
+.unit[data-state="active"] .ring{
+  border-color:var(--p); color:var(--p-core);
+  box-shadow:var(--glow-m), inset 0 0 8px rgba(34,232,106,.25);
+  animation:spin 2.2s linear infinite;
+}
+.unit[data-state="done"] .ring{ border-color:var(--p-deep); color:var(--p-mid); }
+@keyframes spin{ to{ transform:rotate(360deg); } }
+.uname{ font-size:11.5px; color:var(--ink); }
+.unit[data-state="active"] .uname{ color:var(--p-core); text-shadow:var(--glow-s); }
+.urole{ font-size:9.5px; color:var(--ink-3); line-height:1.35; margin-top:2px; }
+.utask{ font-size:9.5px; color:var(--p-mid); margin-top:3px; display:none; }
+.unit[data-assigned="1"] .utask{ display:block; }
+.utags{ display:flex; gap:var(--s1); margin-top:5px; flex-wrap:wrap; }
+.tag{ font-size:8px; letter-spacing:.1em; text-transform:uppercase; padding:1px 5px;
+  border:1px solid var(--rule); color:var(--ink-3); border-radius:2px; white-space:nowrap; }
+.tag.model{ color:var(--p-mid); border-color:var(--p-ghost); }
+.tag.warn{ color:var(--amber); border-color:var(--amber-deep); }
+
+/* ── command bar ────────────────────────────────────────────────────────── */
+.cmdbar{ border-bottom:1px solid var(--rule); background:var(--panel-2);
+  padding:var(--s3) var(--s4); display:flex; flex-direction:column; gap:var(--s3); }
+.swarmrow{ display:flex; align-items:center; gap:var(--s3); flex-wrap:wrap; }
+.swarmrow .lbl{ font-size:8.5px; letter-spacing:.26em; text-transform:uppercase; color:var(--ink-3); }
+.swarmrow .lbl b{ color:var(--p); font-weight:400; }
+.modes{ display:flex; gap:var(--s1); }
+.mode{
+  font-family:var(--mono); font-size:9.5px; letter-spacing:.16em; text-transform:uppercase;
+  padding:5px 12px; background:transparent; cursor:pointer;
+  border:1px solid var(--rule); color:var(--ink-3); transition:all .18s ease;
+}
+.mode:hover{ color:var(--ink-2); border-color:var(--p-ghost); }
+.mode:focus-visible{ outline:1px solid var(--p); outline-offset:1px; }
+.mode[aria-pressed="true"]{ color:var(--void); background:var(--p); border-color:var(--p);
+  box-shadow:var(--glow-m); font-weight:700; }
+
+.prompt{ display:flex; align-items:center; gap:var(--s2); border-bottom:1px solid transparent; }
+.prompt.focus{ border-bottom-color:var(--p); }
+.chev{ color:var(--p); text-shadow:var(--glow-s); font-weight:700; }
+#input{ flex:1; background:transparent; border:none; outline:none; font-family:var(--mono);
+  font-size:14px; color:var(--ink); caret-color:var(--p-core); }
+#input::placeholder{ color:var(--ink-3); }
+#exec{
+  font-family:var(--mono); font-size:10px; letter-spacing:.2em; text-transform:uppercase;
+  padding:6px 16px; cursor:pointer; font-weight:700;
+  background:var(--p); color:var(--void); border:1px solid var(--p); box-shadow:var(--glow-m);
+}
+#exec:hover{ background:var(--p-core); border-color:var(--p-core); }
+#exec:focus-visible{ outline:2px solid var(--p-core); outline-offset:2px; }
+#exec[disabled]{ background:var(--p-ghost); border-color:var(--p-ghost); color:var(--ink-3);
+  box-shadow:none; cursor:not-allowed; }
+
+/* ── chat ───────────────────────────────────────────────────────────────── */
+#chat{ padding:var(--s5) var(--s5) var(--s4); display:flex; flex-direction:column; gap:var(--s5);
+  max-width:860px; margin:0 auto; width:100%; }
+.msg{ display:flex; flex-direction:column; gap:var(--s2); }
+.who{ font-size:8.5px; letter-spacing:.24em; text-transform:uppercase; color:var(--ink-3); }
+.msg-user .who{ color:var(--p); }
+.msg-user .txt{
+  font-size:15px; color:var(--ink); border-left:2px solid var(--p);
+  padding-left:var(--s3); text-shadow:0 0 8px rgba(34,232,106,.18);
+}
+.msg-ai .txt{ font-size:14.5px; line-height:1.72; color:var(--ink); }
+.msg-ai .txt p{ margin:0 0 var(--s3); }
+.msg-ai .txt p:last-child{ margin-bottom:0; }
+.msg-ai .txt strong{ color:var(--p-core); font-weight:600; }
+
+.thinking{ display:flex; align-items:center; gap:var(--s2); font-size:11.5px; color:var(--ink-3); font-style:italic; }
+.thinking .ph{ color:var(--ink-2); font-style:normal; letter-spacing:.04em; }
+.thinking .ph.rag{ color:var(--rag); }
+.dots{ display:inline-flex; gap:3px; }
+.dots i{ width:4px; height:4px; border-radius:50%; background:var(--p); display:block;
+  animation:pulse 1.25s ease-in-out infinite; }
+.dots i:nth-child(2){ animation-delay:.18s } .dots i:nth-child(3){ animation-delay:.36s }
+@keyframes pulse{ 0%,100%{opacity:.18; transform:scale(.8)} 50%{opacity:1; transform:scale(1)} }
+.cursor{ display:inline-block; width:7px; height:1em; margin-left:2px; background:var(--p-core);
+  vertical-align:text-bottom; animation:blink 1.05s steps(2,end) infinite; box-shadow:var(--glow-s); }
+@keyframes blink{0%,50%{opacity:1}50.01%,100%{opacity:0}}
+
+.empty{ text-align:center; color:var(--ink-3); padding:var(--s6) var(--s4); }
+.empty b{ display:block; color:var(--p-mid); font-size:11px; letter-spacing:.24em;
+  text-transform:uppercase; margin-bottom:var(--s2); }
+
+/* ── wire ───────────────────────────────────────────────────────────────── */
+.wire-panel{ border-top:1px solid var(--rule); background:var(--panel);
+  height:168px; display:flex; flex-direction:column; transition:height .25s ease; }
+.wire-panel.min{ height:31px; }
+.wire-panel .phead .dot{ background:var(--wire); box-shadow:var(--glow-w); }
+#wire{ padding:var(--s2) var(--s3); font-size:10.5px; line-height:1.55; }
+.frame{ display:flex; gap:var(--s2); white-space:pre; padding:1px 0; }
+.frame .ar{ color:var(--wire); text-shadow:var(--glow-w); flex:0 0 auto; }
+.frame .ar.in{ color:var(--p-mid); text-shadow:none; }
+.frame .ar.rag{ color:var(--rag); text-shadow:var(--glow-r); }
+.frame .js{ color:var(--wire-deep); min-width:0; overflow-x:auto; }
+.frame .js b{ color:var(--wire); font-weight:400; }
+
+/* ── telemetry ──────────────────────────────────────────────────────────── */
+.tsec{ border-bottom:1px solid var(--rule); padding:var(--s3); }
+.tlabel{ font-size:8.5px; letter-spacing:.24em; text-transform:uppercase; color:var(--ink-3); margin-bottom:var(--s2); }
+.row{ display:flex; align-items:center; gap:var(--s2); padding:3px 0; font-size:11px; }
+.row .nm{ color:var(--ink-2); min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.row .vl{ margin-left:auto; color:var(--ink); font-variant-numeric:tabular-nums; flex:0 0 auto; }
+.pip{ width:6px; height:6px; border-radius:50%; flex:0 0 auto; }
+.pip.up{ background:var(--p); box-shadow:var(--glow-s); }
+.pip.idle{ background:var(--p-deep); }
+.pip.rag{ background:var(--rag); box-shadow:var(--glow-r); }
+.pip.down{ background:var(--fault); box-shadow:0 0 6px rgba(255,59,138,.5); }
+.meter{ height:3px; background:var(--p-ghost); margin-top:3px; overflow:hidden; }
+.meter i{ display:block; height:100%; background:var(--p-mid); transition:width .6s ease; }
+.meter.hot i{ background:var(--p); box-shadow:var(--glow-s); }
+.spark{ width:100%; height:44px; display:block; }
+.hero{ font-size:30px; color:var(--p-core); text-shadow:var(--glow-m); font-variant-numeric:tabular-nums; line-height:1; }
+.hero small{ font-size:10px; color:var(--ink-3); letter-spacing:.18em; text-shadow:none; margin-left:5px; }
+.simrow{ margin-bottom:var(--s2); }
+.simhead{ display:flex; font-size:10px; gap:var(--s2); }
+.simhead .src{ color:var(--ink-2); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.simhead .sc{ margin-left:auto; color:var(--rag); font-variant-numeric:tabular-nums; }
+.simbar{ height:6px; background:var(--p-ghost); margin-top:3px; border-radius:0 3px 3px 0; overflow:hidden; }
+.simbar i{ display:block; height:100%; border-radius:0 3px 3px 0; transition:width .7s cubic-bezier(.2,.8,.2,1); }
+
+.statusbar{ display:flex; align-items:center; gap:var(--s4); padding:5px var(--s5);
+  border-top:1px solid var(--rule); background:var(--panel-2); font-size:9.5px;
+  letter-spacing:.14em; text-transform:uppercase; color:var(--ink-3); }
+.statusbar .sep{ color:var(--rule); }
+.statusbar .ok{ color:var(--p); } .statusbar .wn{ color:var(--amber); }
+.statusbar .er{ color:var(--fault); } .statusbar .rg{ color:var(--rag); }
+.statusbar .right{ margin-left:auto; display:flex; gap:var(--s4); align-items:center; }
+.statusbar button{
+  font-family:var(--mono); font-size:9.5px; letter-spacing:.14em; text-transform:uppercase;
+  background:none; border:1px solid var(--rule); color:var(--ink-3);
+  padding:2px 8px; cursor:pointer;
+}
+.statusbar button:hover{ color:var(--ink-2); border-color:var(--p-ghost); }
+.statusbar button:focus-visible{ outline:2px solid var(--p); outline-offset:2px; }
+
+/* ══ WIZARD ════════════════════════════════════════════════════════════════ */
+#wiz{ position:fixed; inset:0; z-index:110; background:rgba(4,7,10,.92);
+  display:none; align-items:center; justify-content:center; padding:var(--s5); }
+#wiz.on{ display:flex; }
+.wiz-box{
+  width:min(1000px,96vw); height:min(680px,92vh);
+  background:var(--panel); border:1px solid var(--p-ghost);
+  box-shadow:0 0 60px rgba(34,232,106,.14), inset 0 0 120px rgba(34,232,106,.03);
+  display:grid; grid-template-rows:auto minmax(0,1fr) auto;
+}
+.wiz-head{ display:flex; align-items:center; gap:var(--s3); padding:var(--s4) var(--s5);
+  border-bottom:1px solid var(--rule); }
+.wiz-head h2{ margin:0; font-size:15px; letter-spacing:.3em; text-transform:uppercase;
+  color:var(--p-core); text-shadow:var(--glow-s); font-weight:700; }
+.wiz-head .sub{ font-size:9.5px; color:var(--ink-3); letter-spacing:.16em; text-transform:uppercase; }
+.wiz-x{ margin-left:auto; background:none; border:1px solid var(--rule); color:var(--ink-3);
+  cursor:pointer; font-family:var(--mono); font-size:14px; width:28px; height:28px; }
+.wiz-x:hover{ color:var(--fault); border-color:var(--fault); }
+
+.wiz-main{ display:grid; grid-template-columns:210px minmax(0,1fr); min-height:0; }
+.wiz-steps{ border-right:1px solid var(--rule); padding:var(--s4) 0; background:var(--panel-2); }
+.wstep{ display:flex; gap:var(--s3); align-items:center; padding:var(--s3) var(--s4);
+  font-size:10px; letter-spacing:.14em; text-transform:uppercase; color:var(--ink-3);
+  border-left:2px solid transparent; }
+.wstep .num{ width:20px; height:20px; border:1px solid var(--rule); display:grid; place-items:center;
+  font-size:9px; flex:0 0 auto; }
+.wstep[data-on="1"]{ color:var(--p-core); border-left-color:var(--p); background:rgba(34,232,106,.05); }
+.wstep[data-on="1"] .num{ border-color:var(--p); color:var(--p-core); box-shadow:var(--glow-s); }
+.wstep[data-done="1"] .num{ border-color:var(--p-deep); color:var(--p-mid); }
+.wstep[data-skip="1"]{ opacity:.3; }
+
+.wiz-body{ padding:var(--s5); overflow:auto; min-height:0; }
+.wpane{ display:none; } .wpane.on{ display:block; }
+.wtitle{ font-size:13px; color:var(--ink); letter-spacing:.06em; margin-bottom:var(--s2); }
+.wnote{ font-size:11px; color:var(--ink-3); line-height:1.6; margin-bottom:var(--s5); max-width:62ch; }
+
+.field{ margin-bottom:var(--s4); }
+.field label{ display:block; font-size:8.5px; letter-spacing:.24em; text-transform:uppercase;
+  color:var(--ink-3); margin-bottom:var(--s2); }
+.field input[type=text], .field textarea{
+  width:100%; background:var(--void); border:1px solid var(--rule); color:var(--ink);
+  font-family:var(--mono); font-size:13px; padding:var(--s3); outline:none; resize:vertical;
+}
+.field input:focus, .field textarea:focus{ border-color:var(--p); box-shadow:inset 0 0 20px rgba(34,232,106,.06); }
+
+.picks{ display:grid; gap:var(--s3); }
+.picks.two{ grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); }
+.pick{
+  border:1px solid var(--rule); background:var(--panel-2); padding:var(--s4);
+  cursor:pointer; text-align:left; font-family:var(--mono); color:var(--ink);
+  display:flex; flex-direction:column; gap:var(--s2); transition:all .18s ease; position:relative;
+}
+.pick:hover{ border-color:var(--p-ghost); background:var(--panel-3); }
+.pick:focus-visible{ outline:2px solid var(--p); outline-offset:2px; }
+.pick[aria-pressed="true"]{ border-color:var(--p); background:rgba(34,232,106,.07);
+  box-shadow:inset 0 0 30px rgba(34,232,106,.07); }
+.pick[aria-pressed="true"]::after{ content:"●"; position:absolute; top:var(--s3); right:var(--s3);
+  color:var(--p); font-size:9px; text-shadow:var(--glow-s); }
+.pick .pt{ font-size:12.5px; color:var(--ink); letter-spacing:.04em; }
+.pick[aria-pressed="true"] .pt{ color:var(--p-core); text-shadow:var(--glow-s); }
+.pick .pd{ font-size:10.5px; color:var(--ink-3); line-height:1.55; }
+.pick .pmeta{ display:flex; gap:var(--s2); margin-top:var(--s1); flex-wrap:wrap; }
+
+.toggle{ display:flex; align-items:center; gap:var(--s3); padding:var(--s3) 0; }
+.sw{ width:42px; height:20px; border:1px solid var(--rule); background:var(--void);
+  cursor:pointer; position:relative; flex:0 0 auto; padding:0; }
+.sw i{ position:absolute; top:2px; left:2px; width:14px; height:14px; background:var(--p-deep);
+  transition:all .2s ease; display:block; }
+.sw[aria-pressed="true"]{ border-color:var(--p); }
+.sw[aria-pressed="true"] i{ left:24px; background:var(--p); box-shadow:var(--glow-s); }
+.sw:focus-visible{ outline:2px solid var(--p); outline-offset:2px; }
+.toggle .tl{ font-size:11.5px; color:var(--ink); }
+.toggle .td{ font-size:10px; color:var(--ink-3); }
+
+.assign{ border:1px solid var(--rule); }
+.arow{ display:grid; grid-template-columns:auto 168px minmax(0,1fr); gap:var(--s3);
+  align-items:center; padding:var(--s2) var(--s3); border-bottom:1px solid var(--rule); }
+.arow:last-child{ border-bottom:none; }
+.arow input[type=checkbox]{ accent-color:#22E86A; width:14px; height:14px; cursor:pointer; }
+.arow .an{ font-size:11px; color:var(--ink-2); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.arow input[type=text]{ background:var(--void); border:1px solid var(--rule); color:var(--ink);
+  font-family:var(--mono); font-size:11.5px; padding:5px var(--s2); outline:none; width:100%; }
+.arow input[type=text]:focus{ border-color:var(--p); }
+.arow.off{ opacity:.42; }
+
+.summary{ border:1px solid var(--p-ghost); background:rgba(34,232,106,.04); padding:var(--s4); }
+.srow{ display:flex; gap:var(--s3); padding:5px 0; font-size:12px; border-bottom:1px solid var(--rule); }
+.srow:last-child{ border-bottom:none; }
+.srow .sk{ width:130px; flex:0 0 auto; font-size:8.5px; letter-spacing:.2em;
+  text-transform:uppercase; color:var(--ink-3); padding-top:3px; }
+.srow .sv{ color:var(--ink); }
+.srow .sv b{ color:var(--p-core); font-weight:400; }
+
+.wiz-foot{ display:flex; align-items:center; gap:var(--s3); padding:var(--s4) var(--s5);
+  border-top:1px solid var(--rule); background:var(--panel-2); }
+.wiz-foot .hint{ font-size:10px; color:var(--ink-3); }
+.wiz-foot .grow{ margin-left:auto; display:flex; gap:var(--s2); }
+.btn{ font-family:var(--mono); font-size:10px; letter-spacing:.2em; text-transform:uppercase;
+  padding:8px 18px; cursor:pointer; background:transparent; border:1px solid var(--rule); color:var(--ink-2); }
+.btn:hover{ border-color:var(--p-ghost); color:var(--ink); }
+.btn:focus-visible{ outline:2px solid var(--p); outline-offset:2px; }
+.btn.go{ background:var(--p); border-color:var(--p); color:var(--void); font-weight:700; box-shadow:var(--glow-m); }
+.btn.go:hover{ background:var(--p-core); border-color:var(--p-core); }
+.btn[disabled]{ opacity:.35; cursor:not-allowed; }
+
+::-webkit-scrollbar{ width:8px; height:8px; }
+::-webkit-scrollbar-track{ background:var(--void); }
+::-webkit-scrollbar-thumb{ background:var(--p-ghost); }
+::-webkit-scrollbar-thumb:hover{ background:var(--p-deep); }
+
+@media (max-width:1080px){ .console{ grid-template-columns:210px minmax(0,1fr); } .rail-r{ display:none; } }
+@media (max-width:760px){
+  .console{ grid-template-columns:minmax(0,1fr); } .rail-l{ display:none; }
+  .masthead{ padding:var(--s3); flex-wrap:wrap; } .mast-meta{ display:none; }
+  .wiz-main{ grid-template-columns:minmax(0,1fr); } .wiz-steps{ display:none; }
+}
+@media (prefers-reduced-motion:reduce){
+  *,*::before,*::after{ animation:none !important; transition:none !important; }
+}
+</style>
+
+<canvas id="grid" aria-hidden="true"></canvas>
+<div class="crt" aria-hidden="true"></div>
+
+<div id="boot">
+  <div class="boot-inner">
+    <div class="boot-line" data-d="0">lag/v0.2.0  phosphor console</div>
+    <div class="boot-line" data-d="1">ollama @ localhost:11434 ................. <span style="color:var(--p-core)">OK</span>  3 models</div>
+    <div class="boot-line" data-d="2">servers/tools_server.py .................. <span style="color:var(--p-core)">UP</span>  8 tools</div>
+    <div class="boot-line" data-d="3">servers/rag_server.py .................... <span style="color:var(--p-core)">UP</span>  retrieval always-on</div>
+    <div class="boot-line" data-d="4">chroma ./.chroma ......................... <span style="color:var(--p-core)">OK</span>  9 chunks · 768d</div>
+    <div class="boot-line" data-d="5">personas/ ................................ <span style="color:var(--p-core)">OK</span>  9 loaded</div>
+    <div class="boot-line" data-d="6">chat model ............................... <span style="color:var(--p-core)">ministral-3:8b</span>  ctx 8192</div>
+    <div class="boot-line" data-d="7">web_search ............................... <span style="color:var(--p-core)">UP</span>  duckduckgo · keyless</div>
+    <div class="boot-bar"><i></i></div>
+  </div>
+</div>
+
+<div class="shell">
+
+  <header class="masthead">
+    <div class="wordmark">lag<small>local agent kit</small></div>
+    <button id="newproj">＋ new project</button>
+    <div class="projchip" id="projchip">
+      <div>
+        <div class="pn" id="chip-name"></div>
+        <div class="pm" id="chip-meta"></div>
+      </div>
+      <button id="chip-x" title="End project" aria-label="End project">✕</button>
+    </div>
+    <div class="mast-meta">
+      <div class="meta"><b id="m-model">ministral-3:8b</b><span>chat model</span></div>
+      <div class="meta"><b style="color:var(--rag)">active</b><span>retrieval</span></div>
+      <div class="meta"><b style="color:var(--wire)">mcp · stdio</b><span>transport</span></div>
+      <div class="meta"><b id="m-uptime">00:00</b><span>session</span></div>
+    </div>
+  </header>
+
+  <div class="console">
+
+    <aside class="rail rail-l">
+      <div class="phead"><span class="dot"></span>roster<span class="tail" id="roster-count">9 units</span></div>
+      <div class="pbody" id="roster"></div>
+    </aside>
+
+    <main class="stage">
+
+      <div class="cmdbar">
+        <div class="swarmrow">
+          <span class="lbl">swarm · <b id="swarm-state">off</b></span>
+          <div class="modes" role="group" aria-label="Swarm mode">
+            <button class="mode" data-mode="pipeline" aria-pressed="false">pipeline</button>
+            <button class="mode" data-mode="parallel" aria-pressed="false">parallel</button>
+            <button class="mode" data-mode="crew"     aria-pressed="false">crew</button>
+          </div>
+          <span class="lbl" style="color:var(--ink-3)">click again to disengage</span>
+        </div>
+        <div class="prompt" id="promptwrap">
+          <span class="chev">&gt;</span>
+          <input id="input" autocomplete="off" spellcheck="false"
+                 placeholder="ask anything — retrieval runs on every turn" aria-label="Message">
+          <button id="exec">send</button>
+        </div>
+      </div>
+
+      <div class="pbody" id="chat-wrap">
+        <div id="chat">
+          <div class="empty">
+            <b>ready</b>
+            ministral-3:8b · 8192 ctx · retrieval active · 9 tools over mcp<br>
+            ask a question, or start a project from the top bar
+          </div>
+        </div>
+      </div>
+
+      <section class="wire-panel" id="wirepanel">
+        <div class="phead"><span class="dot"></span>mcp wire · stdio · json-rpc
+          <span class="tail" id="wire-count">2 servers up</span>
+          <button id="wire-toggle" aria-expanded="true">hide</button>
+        </div>
+        <div class="pbody" id="wire-body"><div id="wire"></div></div>
+      </section>
+
+    </main>
+
+    <aside class="rail rail-r">
+      <div class="phead"><span class="dot"></span>telemetry</div>
+      <div class="pbody">
+        <div class="tsec">
+          <div class="tlabel">throughput</div>
+          <div class="hero"><span id="tps">0.0</span><small>TOK/S</small></div>
+          <svg class="spark" id="spark" viewBox="0 0 240 44" preserveAspectRatio="none"
+               aria-label="Token throughput, last 40 samples"></svg>
+        </div>
+        <div class="tsec">
+          <div class="tlabel">models loaded</div>
+          <div id="models"></div>
+        </div>
+        <div class="tsec">
+          <div class="tlabel">mcp servers · always on</div>
+          <div class="row"><span class="pip up"></span><span class="nm">tools_server.py</span><span class="vl">8</span></div>
+          <div class="row"><span class="pip rag"></span><span class="nm">rag_server.py</span><span class="vl">1</span></div>
+        </div>
+        <div class="tsec">
+          <div class="tlabel">tool registry</div>
+          <div id="tools"></div>
+        </div>
+        <div class="tsec">
+          <div class="tlabel">retrieved this turn · docs + memory</div>
+          <div id="sims"></div>
+        </div>
+      </div>
+    </aside>
+
+  </div>
+
+  <footer class="statusbar">
+    <span>ollama <span class="ok">up</span></span><span class="sep">│</span>
+    <span>mcp <span class="ok">2.0.0</span></span><span class="sep">│</span>
+    <span>rag <span class="rg">always on</span></span><span class="sep">│</span>
+    <span>web_search <span class="ok">live</span></span>
+    <span class="right">
+      <span>run_shell <span class="er">unsandboxed</span></span>
+      <span class="sep">│</span>
+      <button id="vfx" aria-pressed="true">crt <span class="ok">on</span></button>
+      <span class="sep">│</span><span id="st-state">idle</span>
+    </span>
+  </footer>
+</div>
+
+<!-- ═══ WIZARD ═══════════════════════════════════════════════════════════ -->
+<div id="wiz" role="dialog" aria-modal="true" aria-labelledby="wiz-title">
+  <div class="wiz-box">
+    <div class="wiz-head">
+      <div>
+        <h2 id="wiz-title">new project</h2>
+        <div class="sub" id="wiz-sub">step 1 of 5 · brief</div>
+      </div>
+      <button class="wiz-x" id="wiz-close" aria-label="Close">✕</button>
+    </div>
+
+    <div class="wiz-main">
+      <nav class="wiz-steps" id="wiz-nav"></nav>
+      <div class="wiz-body">
+
+        <!-- 1 BRIEF -->
+        <section class="wpane on" data-step="0">
+          <div class="wtitle">What are we building?</div>
+          <div class="wnote">Name the project and describe the objective. This becomes the brief every
+            agent works from — the orchestrator decomposes it, or you hand pieces out yourself.</div>
+          <div class="field">
+            <label for="p-name">project name</label>
+            <input type="text" id="p-name" placeholder="url-shortener">
+          </div>
+          <div class="field">
+            <label for="p-obj">objective</label>
+            <textarea id="p-obj" rows="5" placeholder="Design and implement a tiny URL shortener with base62 encoding and SQLite persistence."></textarea>
+          </div>
+        </section>
+
+        <!-- 2 ORCHESTRATION -->
+        <section class="wpane" data-step="1">
+          <div class="wtitle">Who runs the project?</div>
+          <div class="wnote">Either the orchestrator breaks the objective into tasks and delegates them,
+            or you turn it off and assign work to specific agents yourself.</div>
+          <div class="picks two">
+            <button class="pick" data-orch="auto" aria-pressed="true">
+              <span class="pt">Orchestrated</span>
+              <span class="pd">architect_agent decomposes the brief, delegates to specialists, then
+                synthesises their output into one result. Hands-off.</span>
+              <span class="pmeta"><span class="tag model">ministral-3:8b</span><span class="tag">auto-delegate</span></span>
+            </button>
+            <button class="pick" data-orch="manual" aria-pressed="false">
+              <span class="pt">Manual assignment</span>
+              <span class="pd">Orchestrator off. You choose which agents run and write the instruction
+                each one receives. Full control, no delegation layer.</span>
+              <span class="pmeta"><span class="tag">you assign</span><span class="tag">no synthesis</span></span>
+            </button>
+          </div>
+        </section>
+
+        <!-- 3 MODEL -->
+        <section class="wpane" data-step="2">
+          <div class="wtitle">Which model drives it?</div>
+          <div class="wnote">8–9B is the sweet spot for reasoning and structured output. Smaller models
+            are faster but weaker at delegation; R1 distills make poor orchestrators — thinking tokens
+            wreck loop latency.</div>
+          <div class="picks" id="model-picks"></div>
+        </section>
+
+        <!-- 4 SWARM -->
+        <section class="wpane" data-step="3">
+          <div class="wtitle">Run it as a swarm?</div>
+          <div class="wnote">A swarm puts several agents on the work at once. Pick one or more modes —
+            with several selected they run in sequence, each stage feeding the next.</div>
+          <div class="toggle">
+            <button class="sw" id="sw-swarm" aria-pressed="true" aria-label="Use swarm"><i></i></button>
+            <div>
+              <div class="tl">Use a swarm</div>
+              <div class="td">Off runs a single agent on the whole brief.</div>
+            </div>
+          </div>
+          <div class="picks" id="swarm-picks" style="margin-top:var(--s4)">
+            <button class="pick" data-sm="pipeline" aria-pressed="false">
+              <span class="pt">pipeline</span>
+              <span class="pd">Each agent builds on the previous one's output. Best when the work has a
+                natural order — design, then build, then review.</span>
+            </button>
+            <button class="pick" data-sm="parallel" aria-pressed="false">
+              <span class="pt">parallel</span>
+              <span class="pd">Every agent tackles the brief at once and the outputs are concatenated.
+                Fast, and good for gathering independent perspectives.</span>
+            </button>
+            <button class="pick" data-sm="crew" aria-pressed="true">
+              <span class="pt">crew</span>
+              <span class="pd">The first agent coordinates: decompose, delegate to specialists,
+                synthesise. The most autonomous mode.</span>
+            </button>
+          </div>
+        </section>
+
+        <!-- 5 ASSIGN -->
+        <section class="wpane" data-step="4">
+          <div class="wtitle">Assign the work</div>
+          <div class="wnote" id="assign-note">Choose which agents run and what each one is told to do.
+            Blank instructions inherit the project objective.</div>
+          <div class="assign" id="assign"></div>
+        </section>
+
+        <!-- 6 REVIEW -->
+        <section class="wpane" data-step="5">
+          <div class="wtitle">Ready to launch</div>
+          <div class="wnote">Check the brief, then launch. You can end the project any time from the
+            chip in the top bar.</div>
+          <div class="summary" id="summary"></div>
+        </section>
+
+      </div>
+    </div>
+
+    <div class="wiz-foot">
+      <span class="hint" id="wiz-hint">retrieval and mcp are always on — nothing to configure</span>
+      <div class="grow">
+        <button class="btn" id="wiz-back">back</button>
+        <button class="btn go" id="wiz-next">next</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+(() => {
+"use strict";
+const RM = matchMedia("(prefers-reduced-motion: reduce)").matches;
+const $  = s => document.querySelector(s);
+const $$ = s => [...document.querySelectorAll(s)];
+const el = (t,c,h) => { const n=document.createElement(t); if(c)n.className=c; if(h!=null)n.innerHTML=h; return n; };
+const sleep = ms => new Promise(r => setTimeout(r, RM ? Math.min(ms,40) : ms));
+const esc = s => String(s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+
+/* ══ real project data ══════════════════════════════════════════════════ */
+const AGENTS = [
+  {n:"architect_agent",    r:"System design. The hardest reasoning role.",             m:"ministral-3:8b", t:4},
+  {n:"senior_dev_agent",   r:"Code review and quality. Correctness and edge cases.",   m:"ministral-3:8b", t:3},
+  {n:"dev_agent",          r:"Implementation. Writes working code from a spec.",       m:"qwen3.5:4b",     t:4},
+  {n:"tester_agent",       r:"Writes and runs tests against implemented code.",        m:"qwen3.5:4b",     t:4},
+  {n:"analyst_agent",      r:"Technical analysis of data, logs, and agent output.",    m:"qwen3.5:4b",     t:5},
+  {n:"biz_analyst_agent",  r:"Requirements, specs, and stakeholder-facing language.",  m:"qwen3.5:4b",     t:4},
+  {n:"design_agent",       r:"UI design decisions, scoped to text-describable specs.", m:"qwen3.5:4b",     t:2},
+  {n:"research_agent",     r:"General research. First stop for external knowledge.",   m:"qwen3.5:4b",     t:5},
+  {n:"dev_research_agent", r:"Technical research: docs, repos, library APIs.",         m:"qwen3.5:4b",     t:3},
+];
+const TOOLS  = ["read_file","write_file","list_dir","run_shell","system_info","remember","recall"];
+const MODELS = [
+  {n:"ministral-3:8b", g:6.02, p:"8B", ok:true,  d:"General reasoning with solid structured output. The default for chat and orchestration.", badge:"recommended"},
+  {n:"deepseek-r1:8b", g:5.23, p:"8B", ok:false, d:"R1 distill. In the size band, but weak at structured output and the thinking tokens destroy loop latency.", badge:"poor orchestrator"},
+  {n:"qwen3.5:4b",     g:3.39, p:"4B", ok:false, d:"Fast and light. Below the 8B band — fine for specialists, underpowered for driving a project.", badge:"below band"},
+];
+const CHUNKS = [
+  {s:"VECTORS_AND_SEARCH", d:.69}, {s:"VECTORS_AND_SEARCH", d:.61},
+  {s:"RAG_SETUP", d:.48}, {s:"VECTORS_AND_SEARCH", d:.41}, {s:"RAG_SETUP", d:.33},
+];
+
+/* ══ state ══════════════════════════════════════════════════════════════ */
+const S = {
+  model: "ministral-3:8b",
+  swarm: null,            // null | pipeline | parallel | crew
+  project: null,          // {name, obj, orch, model, swarm, modes[], assign[]}
+  running: false,
+};
+
+/* ══ roster ═════════════════════════════════════════════════════════════ */
+const roster = $("#roster");
+AGENTS.forEach((a,i) => {
+  const u = el("div","unit");
+  u.dataset.state="idle"; u.dataset.name=a.n; u.dataset.assigned="0";
+  u.innerHTML =
+    `<div class="ring">${String(i+1).padStart(2,"0")}</div>
+     <div>
+       <div class="uname">${a.n}</div>
+       <div class="urole">${a.r}</div>
+       <div class="utask"></div>
+       <div class="utags">
+         <span class="tag model">${a.m}</span>
+         ${a.deg?'<span class="tag warn">degraded</span>':""}
+         <span class="tag">${a.t} tools</span>
+       </div>
+     </div>`;
+  roster.appendChild(u);
+});
+const unitOf  = n => roster.querySelector(`[data-name="${n}"]`);
+const setUnit = (n,s) => { const u=unitOf(n); if(u) u.dataset.state=s; };
+const resetUnits = () => $$(".unit").forEach(u => u.dataset.state="idle");
+
+/* ══ telemetry ══════════════════════════════════════════════════════════ */
+const mBox = $("#models");
+MODELS.forEach(m => {
+  mBox.appendChild(el("div", null,
+    `<div class="row"><span class="pip idle" data-m="${m.n}"></span>
+       <span class="nm">${m.n}</span><span class="vl">${m.g.toFixed(2)} GB</span></div>
+     <div class="meter" data-mm="${m.n}"><i style="width:0%"></i></div>`));
+});
+const tBox = $("#tools");
+TOOLS.forEach(t => tBox.appendChild(el("div","row",
+  `<span class="pip up"></span><span class="nm">${t}</span><span class="vl" data-tc="${t}">0</span>`)));
+tBox.appendChild(el("div","row",
+  `<span class="pip rag"></span><span class="nm" style="color:var(--rag)">search_knowledge_base</span><span class="vl" data-tc="search_knowledge_base">0</span>`));
+tBox.appendChild(el("div","row",
+  `<span class="pip up"></span><span class="nm">web_search</span><span class="vl" data-tc="web_search">0</span>`));
+
+const sBox = $("#sims");
+function renderSims(active){
+  sBox.innerHTML = "";
+  CHUNKS.forEach(c => {
+    const col = c.d>.6?"var(--rag)":c.d>.45?"#8E6BD6":c.d>.35?"#5F4791":"var(--rag-deep)";
+    sBox.appendChild(el("div","simrow",
+      `<div class="simhead"><span class="src">${c.s}</span><span class="sc">${c.d.toFixed(2)}</span></div>
+       <div class="simbar"><i style="width:${active?Math.round(c.d*100):0}%;background:${col}"></i></div>`));
+  });
+}
+renderSims(false);
+
+const SPK = $("#spark");
+let series = Array.from({length:40}, () => 0);
+function drawSpark(){
+  const W=240,H=44,P=3, max=Math.max(12,...series);
+  const pts = series.map((v,i)=>[(i/(series.length-1))*W, H-P-(v/max)*(H-P*2)]);
+  const line = pts.map(p=>p.join(",")).join(" ");
+  const [ex,ey] = pts[pts.length-1];
+  SPK.innerHTML = `
+    <defs><linearGradient id="sg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#22E86A" stop-opacity=".38"/>
+      <stop offset="100%" stop-color="#22E86A" stop-opacity="0"/></linearGradient></defs>
+    <line x1="0" y1="${H/2}" x2="${W}" y2="${H/2}" stroke="#10262A" stroke-width="1"/>
+    <polygon points="0,${H} ${line} ${W},${H}" fill="url(#sg)"/>
+    <polyline points="${line}" fill="none" stroke="#22E86A" stroke-width="2"
+      stroke-linejoin="round" stroke-linecap="round"/>
+    <circle cx="${ex}" cy="${ey}" r="3" fill="#6BFFB0"/>
+    <circle cx="${ex}" cy="${ey}" r="6" fill="none" stroke="#6BFFB0" stroke-opacity=".35"/>`;
+}
+drawSpark();
+const pushTps = v => { series.push(v); series.shift(); $("#tps").textContent=v.toFixed(1); drawSpark(); };
+const tick = () => pushTps(7 + Math.random()*11);
+function loadModel(name){
+  const p = mBox.querySelector(`[data-m="${name}"]`), m = mBox.querySelector(`[data-mm="${name}"] i`);
+  if(p) p.className="pip up";
+  if(m){ m.parentElement.classList.add("hot"); m.style.width="100%"; }
+}
+function unloadAll(){
+  mBox.querySelectorAll(".pip").forEach(p=>p.className="pip idle");
+  mBox.querySelectorAll(".meter").forEach(m=>{ m.classList.remove("hot"); m.querySelector("i").style.width="0%"; });
+}
+const bumpTool = n => { const x = tBox.querySelector(`[data-tc="${n}"]`); if(x) x.textContent = (+x.textContent||0)+1; };
+
+/* ══ wire (always live) ═════════════════════════════════════════════════ */
+let frames = 0;
+const wireBody = $("#wire-body");
+function wireFrame(dir, json, kind){
+  const w = $("#wire"); if(!w) return;
+  const pretty = esc(json).replace(/&quot;([a-zA-Z_]+)&quot;:/g,'<b>"$1"</b>:');
+  const arrow = dir==="in" ? "←" : "→";
+  w.appendChild(el("div","frame",
+    `<span class="ar ${dir==="in"?"in":""} ${kind==="rag"?"rag":""}">${arrow}</span><span class="js">${pretty}</span>`));
+  frames++; $("#wire-count").textContent = frames + " frames";
+  wireBody.scrollTop = wireBody.scrollHeight;
+  while(w.children.length > 220) w.removeChild(w.firstChild);
+}
+// boot handshakes — both servers are up before the operator types anything
+function bootWire(){
+  wireFrame("out",'{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","clientInfo":{"name":"lag"}}}');
+  wireFrame("in", '{"jsonrpc":"2.0","id":1,"result":{"serverInfo":{"name":"lag-tools"},"capabilities":{"tools":{}}}}');
+  wireFrame("out",'{"jsonrpc":"2.0","id":2,"method":"tools/list"}');
+  wireFrame("in", '{"jsonrpc":"2.0","id":2,"result":{"tools":[8 items]}}');
+  wireFrame("out",'{"jsonrpc":"2.0","id":3,"method":"initialize","params":{"clientInfo":{"name":"lag"}}}',"rag");
+  wireFrame("in", '{"jsonrpc":"2.0","id":3,"result":{"serverInfo":{"name":"lag-rag"},"capabilities":{"tools":{}}}}',"rag");
+  wireFrame("out",'{"jsonrpc":"2.0","id":4,"method":"tools/list"}',"rag");
+  wireFrame("in", '{"jsonrpc":"2.0","id":4,"result":{"tools":[{"name":"search_knowledge_base"}]}}',"rag");
+}
+$("#wire-toggle").addEventListener("click", e => {
+  const p = $("#wirepanel"), min = p.classList.toggle("min");
+  e.target.textContent = min ? "show" : "hide";
+  e.target.setAttribute("aria-expanded", String(!min));
+});
+
+/* ══ chat ═══════════════════════════════════════════════════════════════ */
+const chat = $("#chat"), chatWrap = $("#chat-wrap");
+const scroll = () => { chatWrap.scrollTop = chatWrap.scrollHeight; };
+function clearEmpty(){ const e = chat.querySelector(".empty"); if(e) e.remove(); }
+function say(who, cls){
+  const m = el("div", `msg ${cls}`, `<div class="who">${who}</div><div class="txt"></div>`);
+  chat.appendChild(m); scroll(); return m.querySelector(".txt");
+}
+function thinkingLine(){
+  const t = el("div","thinking",
+    `<span class="dots"><i></i><i></i><i></i></span><span class="ph">thinking</span>`);
+  chat.appendChild(t); scroll();
+  return {
+    set: (txt, rag) => { const p = t.querySelector(".ph"); p.textContent = txt; p.className = "ph" + (rag?" rag":""); scroll(); },
+    kill: () => t.remove(),
+  };
+}
+async function typeInto(node, text, ms=10){
+  const cur = el("span","cursor"); node.appendChild(cur);
+  if(RM){ cur.remove(); node.textContent = text; scroll(); return; }
+  for(let i=0;i<text.length;i++){
+    cur.insertAdjacentText("beforebegin", text[i]);
+    if(i%4===0) scroll();
+    await sleep(ms);
+  }
+  cur.remove(); scroll();
+}
+
+/* retrieval runs on every single turn — never optional */
+async function retrieve(q, th){
+  th.set("searching the knowledge base", true);
+  bumpTool("search_knowledge_base");
+  wireFrame("out",`{"jsonrpc":"2.0","id":${frames+1},"method":"tools/call","params":{"name":"search_knowledge_base","arguments":{"query":"${q.slice(0,48)}","k":5}}}`,"rag");
+  await sleep(420);
+  wireFrame("in", `{"jsonrpc":"2.0","id":${frames},"result":{"content":[{"type":"text","text":"Found 5 relevant chunks…"}]}}`,"rag");
+  renderSims(true);
+  th.set("read 5 chunks · reasoning", true);
+  await sleep(520);
+}
+
+async function toolTurn(name, args){
+  bumpTool(name);
+  const a = JSON.stringify(args);
+  wireFrame("out",`{"jsonrpc":"2.0","id":${frames+1},"method":"tools/call","params":{"name":"${name}","arguments":${a}}}`);
+  await sleep(300);
+  wireFrame("in", `{"jsonrpc":"2.0","id":${frames},"result":{"content":[{"type":"text","text":"…"}],"isError":false}}`);
+  await sleep(160);
+}
+
+/* ══ answers ════════════════════════════════════════════════════════════ */
+const ANSWERS = {
+  default:
+    "This is local-agent-kit — a fully offline multi-agent harness over Ollama. Agents run a "+
+    "reason-act-observe loop and reach their tools over MCP, so the same seven tools work whether "+
+    "they're dispatched in-process or through a real protocol server.\n\n"+
+    "Retrieval is not a separate mode here: every turn searches the vector store first, so answers "+
+    "are grounded in your own documents rather than the model's recollection.",
+  hnsw:
+    "HNSW walks a layered proximity graph. It starts at a coarse layer where a few long hops cover "+
+    "most of the space, then descends into finer layers to refine the neighbourhood — reaching the "+
+    "nearest vectors in roughly log(n) hops instead of scanning all of them.\n\n"+
+    "It's approximate rather than exact, so it can miss the single best match, but it returns the "+
+    "true top-5 about 99% of the time. That trade is why the search feels instant at 9 chunks and "+
+    "would still feel instant at 900,000.",
+};
+const pickAnswer = q => /hnsw|vector|embed|similar|cosine|neighbour|neighbor/i.test(q) ? ANSWERS.hnsw : ANSWERS.default;
+const paras = t => t.split("\n\n");
+
+/* ══ turns ══════════════════════════════════════════════════════════════ */
+async function soloTurn(q){
+  const th = thinkingLine();
+  loadModel(S.model);
+  await sleep(320);
+  await retrieve(q, th);
+  tick();
+  if(/file|project|directory|repo/i.test(q)){
+    th.set("reading the working tree");
+    await toolTurn("list_dir", {path:"."});
+    tick();
+  }
+  th.set("composing an answer");
+  await sleep(360); tick();
+  th.kill();
+  const box = say(`lag · ${S.model}`, "msg-ai");
+  for(const p of paras(pickAnswer(q))){
+    const n = el("p"); box.appendChild(n);
+    await typeInto(n, p);
+  }
+  tick();
+}
+
+async function swarmTurn(q, mode){
+  const crew = S.project && S.project.orch === "manual" && S.project.assign.length
+    ? S.project.assign.map(a => a.n)
+    : ["architect_agent","dev_agent","senior_dev_agent"];
+
+  const th = thinkingLine();
+  loadModel(S.model);
+  await sleep(300);
+  await retrieve(q, th);
+
+  if(mode === "parallel"){
+    th.set(`${crew.length} agents working in parallel`);
+    crew.forEach(c => setUnit(c,"active"));
+    for(let i=0;i<4;i++){ tick(); await sleep(420); }
+    crew.forEach(c => setUnit(c,"done"));
+  } else if(mode === "crew"){
+    th.set("architect_agent decomposing the brief");
+    setUnit("architect_agent","active");
+    await sleep(700); tick();
+    setUnit("architect_agent","done");
+    for(const c of crew.filter(c => c !== "architect_agent")){
+      th.set(`${c} working`);
+      setUnit(c,"active");
+      await toolTurn("write_file", {path:"url_shortener_service.py", content:"…"});
+      tick(); await sleep(280);
+      setUnit(c,"done");
+    }
+    th.set("architect_agent synthesising");
+    setUnit("architect_agent","active");
+    await sleep(620); tick();
+    setUnit("architect_agent","done");
+  } else {
+    for(const c of crew){
+      th.set(`${c} — stage ${crew.indexOf(c)+1} of ${crew.length}`);
+      setUnit(c,"active");
+      await sleep(560); tick();
+      setUnit(c,"done");
+    }
+  }
+
+  th.kill();
+  const box = say(`lag · ${mode} · ${crew.length} agents`, "msg-ai");
+  const out = mode === "parallel"
+    ? "Three independent passes, merged.\n\nAll three converged on base62 over a monotonic counter, "+
+      "which makes collisions structurally impossible. They split on storage: two chose SQLite behind "+
+      "a repository interface, one argued for a flat append-only log. The repository interface wins — "+
+      "it keeps the storage decision reversible."
+    : "**Design accepted.** Base62 over a 64-bit counter, SQLite behind a StorageAdapter interface, "+
+      "so collisions cannot occur by construction and the storage layer stays swappable.\n\n"+
+      "Review flagged one real gap: nothing expires. Mappings live forever, which is fine for a "+
+      "personal tool and wrong for anything public. Add a TTL column before this leaves your machine.";
+  for(const p of paras(out)){
+    const n = el("p"); n.innerHTML = ""; box.appendChild(n);
+    await typeInto(n, p.replace(/\*\*(.+?)\*\*/g, "$1"));
+  }
+  tick();
+}
+
+/* ══ execute ════════════════════════════════════════════════════════════ */
+async function execute(){
+  if(S.running) return;
+  const q = $("#input").value.trim();
+  if(!q) return;
+  S.running = true;
+  $("#exec").disabled = true;
+  $("#st-state").innerHTML = '<span style="color:var(--p)">running</span>';
+  clearEmpty(); resetUnits(); renderSims(false);
+  $("#input").value = "";
+
+  const u = say("you","msg-user");
+  u.textContent = q;
+
+  try{
+    if(S.swarm) await swarmTurn(q, S.swarm);
+    else        await soloTurn(q);
+  }catch(err){
+    const b = say("fault","msg-ai"); b.style.color="var(--fault)"; b.textContent = String(err);
+  }
+  pushTps(0);
+  S.running = false;
+  $("#exec").disabled = false;
+  $("#st-state").textContent = "idle";
+  $("#input").focus({preventScroll:true});
+}
+
+/* ══ swarm row ══════════════════════════════════════════════════════════ */
+$$(".mode").forEach(b => b.addEventListener("click", () => {
+  if(S.running) return;
+  const was = b.getAttribute("aria-pressed") === "true";
+  $$(".mode").forEach(x => x.setAttribute("aria-pressed","false"));
+  if(!was){ b.setAttribute("aria-pressed","true"); S.swarm = b.dataset.mode; }
+  else S.swarm = null;
+  $("#swarm-state").textContent = S.swarm || "off";
+  $("#swarm-state").style.color = S.swarm ? "var(--p)" : "var(--ink-3)";
+}));
+$("#exec").addEventListener("click", execute);
+$("#input").addEventListener("keydown", e => { if(e.key === "Enter") execute(); });
+$("#input").addEventListener("focus", () => $("#promptwrap").classList.add("focus"));
+$("#input").addEventListener("blur",  () => $("#promptwrap").classList.remove("focus"));
+
+/* ══ WIZARD ═════════════════════════════════════════════════════════════ */
+const W = { step:0, orch:"auto", model:"ministral-3:8b", swarm:true, modes:new Set(["crew"]), assign:new Map() };
+const STEP_NAMES = ["brief","orchestration","model","swarm","assign","review"];
+
+// model picks
+const mp = $("#model-picks");
+MODELS.forEach(m => {
+  const b = el("button","pick");
+  b.dataset.model = m.n;
+  b.setAttribute("aria-pressed", String(m.n === W.model));
+  b.innerHTML =
+    `<span class="pt">${m.n}</span>
+     <span class="pd">${m.d}</span>
+     <span class="pmeta">
+       <span class="tag ${m.ok?"model":"warn"}">${m.badge}</span>
+       <span class="tag">${m.p}</span><span class="tag">${m.g.toFixed(2)} GB</span>
+     </span>`;
+  b.addEventListener("click", () => {
+    mp.querySelectorAll(".pick").forEach(x => x.setAttribute("aria-pressed","false"));
+    b.setAttribute("aria-pressed","true"); W.model = m.n;
+  });
+  mp.appendChild(b);
+});
+
+// assignment rows
+const asg = $("#assign");
+AGENTS.forEach(a => {
+  const r = el("div","arow off");
+  r.innerHTML =
+    `<input type="checkbox" data-a="${a.n}" aria-label="Enable ${a.n}">
+     <span class="an">${a.n}</span>
+     <input type="text" data-t="${a.n}" placeholder="instruction — blank inherits the objective">`;
+  const cb = r.querySelector("input[type=checkbox]");
+  cb.addEventListener("change", () => {
+    r.classList.toggle("off", !cb.checked);
+    if(cb.checked) W.assign.set(a.n, r.querySelector("input[type=text]").value);
+    else W.assign.delete(a.n);
+  });
+  r.querySelector("input[type=text]").addEventListener("input", e => {
+    if(cb.checked) W.assign.set(a.n, e.target.value);
+  });
+  asg.appendChild(r);
+});
+
+// orchestration + swarm picks
+$$("[data-orch]").forEach(b => b.addEventListener("click", () => {
+  $$("[data-orch]").forEach(x => x.setAttribute("aria-pressed","false"));
+  b.setAttribute("aria-pressed","true"); W.orch = b.dataset.orch;
+  buildNav();
+}));
+$("#sw-swarm").addEventListener("click", () => {
+  W.swarm = !W.swarm;
+  $("#sw-swarm").setAttribute("aria-pressed", String(W.swarm));
+  $("#swarm-picks").style.opacity = W.swarm ? "1" : ".35";
+  $("#swarm-picks").style.pointerEvents = W.swarm ? "auto" : "none";
+});
+$$("[data-sm]").forEach(b => b.addEventListener("click", () => {
+  const m = b.dataset.sm, on = b.getAttribute("aria-pressed") === "true";
+  if(on && W.modes.size === 1) return;         // keep at least one
+  b.setAttribute("aria-pressed", String(!on));
+  on ? W.modes.delete(m) : W.modes.add(m);
+}));
+
+function buildNav(){
+  const nav = $("#wiz-nav"); nav.innerHTML = "";
+  STEP_NAMES.forEach((n,i) => {
+    const skip = (i === 4 && W.orch === "auto");
+    const s = el("div","wstep", `<span class="num">${i+1}</span><span>${n}</span>`);
+    s.dataset.on = String(i === W.step);
+    s.dataset.done = String(i < W.step);
+    s.dataset.skip = skip ? "1" : "0";
+    nav.appendChild(s);
+  });
+}
+function summarise(){
+  const modes = [...W.modes];
+  const crew = W.orch === "manual"
+    ? [...W.assign.keys()]
+    : ["architect_agent","dev_agent","senior_dev_agent"];
+  $("#summary").innerHTML =
+    `<div class="srow"><span class="sk">project</span><span class="sv"><b>${esc($("#p-name").value || "untitled")}</b></span></div>
+     <div class="srow"><span class="sk">objective</span><span class="sv">${esc($("#p-obj").value || "(inherits from your first message)")}</span></div>
+     <div class="srow"><span class="sk">orchestration</span><span class="sv">${W.orch === "auto"
+        ? "<b>Orchestrated</b> — architect_agent delegates and synthesises"
+        : "<b>Manual</b> — orchestrator off, you assigned the work"}</span></div>
+     <div class="srow"><span class="sk">model</span><span class="sv"><b>${W.model}</b></span></div>
+     <div class="srow"><span class="sk">swarm</span><span class="sv">${W.swarm
+        ? "<b>" + modes.join(" → ") + "</b>" + (modes.length>1 ? " · run in sequence" : "")
+        : "off — a single agent takes the whole brief"}</span></div>
+     <div class="srow"><span class="sk">agents</span><span class="sv">${crew.length ? crew.join(", ") : "<span style='color:var(--amber)'>none assigned yet</span>"}</span></div>
+     <div class="srow"><span class="sk">always on</span><span class="sv">retrieval · mcp · 8 tools</span></div>`;
+}
+function showStep(i){
+  const total = W.orch === "auto" ? 5 : 6;
+  W.step = i;
+  $$(".wpane").forEach(p => p.classList.toggle("on", +p.dataset.step === i));
+  buildNav();
+  const shown = W.orch === "auto" && i === 5 ? 5 : i+1;
+  $("#wiz-sub").textContent = `step ${Math.min(shown,total)} of ${total} · ${STEP_NAMES[i]}`;
+  $("#wiz-back").disabled = i === 0;
+  $("#wiz-next").textContent = i === 5 ? "launch project" : "next";
+  if(i === 5) summarise();
+  if(i === 4) $("#assign-note").textContent =
+    "Orchestrator is off. Tick the agents that should run and write each instruction. " +
+    "Blank instructions inherit the project objective.";
+}
+const nextStep = () => (W.step === 3 && W.orch === "auto") ? 5 : Math.min(W.step+1, 5);
+const prevStep = () => (W.step === 5 && W.orch === "auto") ? 3 : Math.max(W.step-1, 0);
+
+function openWiz(){
+  $("#wiz").classList.add("on");
+  showStep(0);
+  setTimeout(() => $("#p-name").focus(), 60);
+}
+function closeWiz(){ $("#wiz").classList.remove("on"); }
+
+$("#newproj").addEventListener("click", openWiz);
+$("#wiz-close").addEventListener("click", closeWiz);
+$("#wiz-back").addEventListener("click", () => showStep(prevStep()));
+$("#wiz-next").addEventListener("click", () => {
+  if(W.step === 5) launch();
+  else showStep(nextStep());
+});
+$("#wiz").addEventListener("keydown", e => { if(e.key === "Escape") closeWiz(); });
+
+function launch(){
+  const name = $("#p-name").value.trim() || "untitled";
+  const obj  = $("#p-obj").value.trim();
+  const modes = [...W.modes];
+  S.project = {
+    name, obj, orch:W.orch, model:W.model, swarm:W.swarm, modes,
+    assign: [...W.assign.entries()].map(([n,t]) => ({n, t})),
+  };
+  S.model = W.model;
+  $("#m-model").textContent = W.model;
+
+  // reflect assignment on the roster
+  $$(".unit").forEach(u => { u.dataset.assigned = "0"; u.querySelector(".utask").textContent = ""; });
+  if(W.orch === "manual"){
+    S.project.assign.forEach(a => {
+      const u = unitOf(a.n);
+      if(u){ u.dataset.assigned = "1"; u.querySelector(".utask").textContent = "↳ " + (a.t || obj || "inherits objective"); }
+    });
+  }
+
+  // engage the first selected swarm mode in the command row
+  S.swarm = W.swarm ? modes[0] : null;
+  $$(".mode").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.mode === S.swarm)));
+  $("#swarm-state").textContent = S.swarm || "off";
+  $("#swarm-state").style.color = S.swarm ? "var(--p)" : "var(--ink-3)";
+
+  $("#projchip").classList.add("on");
+  $("#chip-name").textContent = name;
+  $("#chip-meta").textContent =
+    `${W.orch === "auto" ? "orchestrated" : "manual"} · ${W.model}` +
+    (W.swarm ? ` · ${modes.join("→")}` : " · solo");
+
+  closeWiz();
+  clearEmpty();
+  const box = say("project launched","msg-ai");
+  box.innerHTML =
+    `<p><strong>${esc(name)}</strong> is live — ${W.orch === "auto"
+      ? "architect_agent will decompose the brief and delegate."
+      : "orchestrator off; " + S.project.assign.length + " agents hold their own instructions."}
+     ${W.swarm ? "Swarm running <strong>" + modes.join(" → ") + "</strong>." : "Running as a single agent."}
+     Retrieval and MCP are active as always.</p>
+     <p>Send a message to start, or restate the objective to kick it off.</p>`;
+  if(obj) $("#input").value = obj;
+  $("#input").focus({preventScroll:true});
+}
+$("#chip-x").addEventListener("click", () => {
+  S.project = null;
+  $("#projchip").classList.remove("on");
+  $$(".unit").forEach(u => { u.dataset.assigned = "0"; u.querySelector(".utask").textContent = ""; });
+});
+
+/* ══ crt kill switch ════════════════════════════════════════════════════ */
+let vfxOn = true;
+$("#vfx").addEventListener("click", () => {
+  vfxOn = !vfxOn;
+  document.body.classList.toggle("novfx", !vfxOn);
+  $("#vfx").setAttribute("aria-pressed", String(vfxOn));
+  $("#vfx").innerHTML = vfxOn
+    ? 'crt <span class="ok">on</span>'
+    : 'crt <span style="color:var(--ink-3)">off</span>';
+});
+
+/* ══ clock ══════════════════════════════════════════════════════════════ */
+const t0 = Date.now();
+setInterval(() => {
+  const s = Math.floor((Date.now()-t0)/1000);
+  $("#m-uptime").textContent = String(Math.floor(s/60)).padStart(2,"0")+":"+String(s%60).padStart(2,"0");
+}, 1000);
+
+/* ══ ambient grid ═══════════════════════════════════════════════════════ */
+const cv = $("#grid"), cx = cv.getContext("2d", {alpha:true});
+let GW, GH, off = 0, dpr = 1;
+function size(){
+  // Back the canvas at device resolution. Drawing 1px lines into a CSS-pixel
+  // buffer on a HiDPI display lands them on fractional device pixels, and the
+  // resampling shimmers against the scanline overlay — that reads as flicker.
+  dpr = Math.min(devicePixelRatio || 1, 2);
+  GW = innerWidth; GH = innerHeight;
+  cv.width = Math.round(GW * dpr);
+  cv.height = Math.round(GH * dpr);
+  cv.style.width = GW + "px";
+  cv.style.height = GH + "px";
+  cx.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+size();
+addEventListener("resize", size);
+
+const snap = v => Math.round(v) + 0.5;   // crisp 1px strokes, no sub-pixel blur
+
+function grid(){
+  cx.clearRect(0, 0, GW, GH);
+  const hz = Math.round(GH * 0.62), sp = 46;
+  cx.lineWidth = 1;
+  cx.strokeStyle = "rgba(34,232,106,.15)";
+  cx.beginPath();
+  for(let i = -24; i <= 24; i++){
+    cx.moveTo(snap(GW/2 + i*sp*2.2), GH);
+    cx.lineTo(snap(GW/2 + i*5.5), hz);
+  }
+  cx.stroke();                            // one path, one stroke — not 49
+  for(let i = 0; i < 26; i++){
+    const t = ((i + off) % 26) / 26;
+    const y = snap(hz + Math.pow(t, 2.4) * (GH - hz));
+    cx.strokeStyle = `rgba(34,232,106,${(.14 + t*.42).toFixed(3)})`;
+    cx.beginPath(); cx.moveTo(0, y); cx.lineTo(GW, y); cx.stroke();
+  }
+}
+grid();
+
+/* Throttled to ~24fps. At 60 the horizontals advance a fraction of a pixel per
+   frame, which beats against the scanlines instead of reading as movement. */
+if(!RM){
+  let last = 0;
+  (function loop(now){
+    if(vfxOn && now - last > 41){ off = (off + 0.05) % 26; grid(); last = now; }
+    requestAnimationFrame(loop);
+  })(0);
+}
+
+/* ══ boot ═══════════════════════════════════════════════════════════════ */
+(async () => {
+  const lines = $$(".boot-line"), bar = $(".boot-bar i");
+  if(RM){ lines.forEach(l => l.classList.add("on")); bar.style.width = "100%"; await sleep(200); }
+  else {
+    for(const l of lines){
+      l.classList.add("on");
+      bar.style.transition = "width .3s";
+      bar.style.width = ((lines.indexOf(l)+1)/lines.length*100) + "%";
+      await sleep(210);
+    }
+    await sleep(380);
+  }
+  $("#boot").classList.add("done");
+  setTimeout(() => { const b = $("#boot"); if(b) b.remove(); }, 600);
+  bootWire();
+  $("#input").focus({preventScroll:true});
+})();
+
+})();
+</script>

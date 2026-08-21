@@ -25,7 +25,7 @@ def run(
     else:
         provider = LocalToolProvider()
 
-    client = OllamaClient(model=model, host=cfg["ollama_base_url"])
+    client = OllamaClient.from_config(cfg, model)
     print(client.run(prompt, tool_provider=provider))
 
 
