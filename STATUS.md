@@ -218,9 +218,11 @@ it's the single exception to "your data never leaves the machine". It also scrap
 endpoint, so it will break if DuckDuckGo changes markup; the parser is pinned by tests that
 use a captured page, not the network.
 
-**Memory doesn't sync between machines.** `.chroma/` and `memory/` are gitignored. If you
-want shared memory across the ASUS and the Mac, that's a real design decision — sync the
-JSON store and re-index on each box, or point both at one store.
+**Memory is per-install, by decision.** `.chroma/` and `memory/` stay gitignored and each
+machine grows its own. Facts a box learns are usually *about* that box — its hardware limits,
+its model set, what's been run there — so syncing them would import claims that are false on
+the other machine. Not a gap to close; if a fact genuinely belongs everywhere, it goes in a
+committed doc and gets ingested on both.
 
 **The UI is a mockup.** `ui/console.html` is scripted playback, wired to nothing. It reflects
 real project data (models, personas, tool registry, context size) but no live process.
