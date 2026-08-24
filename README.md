@@ -73,33 +73,44 @@ local-agent-kit/
 
 ## Build roadmap
 
+All six phases are complete and smoke-tested end to end (105 tests passing).
+
 | Phase | What | Status |
 |------:|------|--------|
-| 0 | Foundation + git | ✅ this commit |
-| 1 | Core ReAct loop over Ollama, hardcoded tools | ☐ |
-| 2 | Real MCP server (FastMCP, stdio) | ☐ |
-| 3 | Harness as MCP client — the bridge | ☐ |
-| 4 | Swarm orchestrator (pipeline/parallel/crew) | ☐ |
-| 5 | Nine personas | ☐ |
-| 6 | RAG MCP server | ☐ |
+| 0 | Foundation + git | ✅ |
+| 1 | Core ReAct loop over Ollama, local tools | ✅ |
+| 2 | Real MCP server (stdio) | ✅ |
+| 3 | Harness as MCP client — the bridge | ✅ |
+| 4 | Swarm orchestrator (pipeline/parallel/crew) | ✅ |
+| 5 | Nine personas | ✅ |
+| 6 | RAG MCP server + always-on retrieval | ✅ |
+
+See `STATUS.md` for current state and what's left.
 
 ---
 
 ## Setup
 
+Primary dev box is a **MacBook Air M4**; a CPU-only Ubuntu machine is the secondary
+box (its extra environment traps are documented in an appendix in `STATUS.md`).
+
 ```bash
-cp config.example.yaml config.yaml      # edit models for this machine
-pip install -e .                         # core
-pip install -e ".[rag]"                  # + vector store, when you reach Phase 6
+cp config.example.yaml config.yaml       # edit models for this machine
+
+# Build the venv on Python 3.12 — chromadb (the [rag] extra) has no 3.14 wheels yet,
+# and macOS ships 3.14 as `python3`. Homebrew: `brew install python@3.12`.
+python3.12 -m venv .venv
+.venv/bin/python -m pip install -e ".[dev,rag]"   # core + tests + vector store
 ```
 
-> **Version note (mid-2026):** the official `mcp` Python SDK ships FastMCP as its
-> high-level interface, but there's a v2 alpha in flight and FastMCP 3.0 shifted some
-> decorator ergonomics. Check `pip show mcp` against any tutorial before copying it.
+> **`mcp` SDK version:** this repo runs on **mcp 2.0.0**, which renamed the high-level
+> server class `FastMCP` → `mcp.server.mcpserver.MCPServer` and `Tool.inputSchema` →
+> `input_schema`. Both servers and the bridge import either spelling via `try/except`,
+> so the kit also runs on mcp 1.x. Most tutorials are still on 1.x — check `pip show mcp`.
 
 ## Models
 
-Set per machine in `config.yaml`. The MacBook Air M4 can run a `qwen3:14b`
-orchestrator comfortably; the CPU-only ASUS should stay on smaller tool-calling
-models. Avoid R1 distills as orchestrators — weak at structured output, and the
-thinking tokens kill loop latency.
+Set per machine in `config.yaml` (roles → tags; personas name only a role). The M4
+runs a `qwen3:14b` orchestrator comfortably and `num_ctx` up to 32768 cheaply; the
+CPU-only box stays on smaller models and a tighter window. Avoid R1 distills as
+orchestrators — weak at structured output, and the thinking tokens kill loop latency.

@@ -14,8 +14,13 @@ discovered at runtime via `tools/list`, reusable by any MCP client.
 
 ## Repo state
 
-Recovered, committed, pushed, and — as of 2026-08-19 — **actually running**. All six phases
-are smoke-tested end to end on this machine, including RAG.
+Recovered, committed, pushed, and **actually running**. All six phases are smoke-tested end
+to end, including RAG.
+
+**Primary dev box is now the MacBook Air M4** (ported here 2026-08-21 for the better specs).
+The CPU-only Ubuntu machine it was built on is the secondary box; its snap-confinement traps
+are real but Ubuntu-only, quarantined in the appendix at the bottom of this file. On the Mac:
+105 tests pass, and `lag run` tool-calls correctly through both the direct and `--mcp` paths.
 
 ```
 src/lag/     config.py  tools.py  ollama_client.py  mcp_client.py  swarm.py  cli.py
@@ -40,39 +45,42 @@ design intent and deliberate trade-offs, stale on status. `MORNING_BRIEF.md` §5
 `lag` entry point "isn't registering cleanly" — that was the broken venv below, not a code
 defect. It registers fine.
 
-### Environment landmines (cost hours; don't rediscover them)
+### Environment (Mac — the primary box)
 
-- **Always run through `.venv/bin/`, and clear the snap's env vars.** Claude Code runs under
-  snap confinement, which exports `PIP_PREFIX=/home/hinzmo/snap/claude-code/common` and a
-  `PYTHONPATH` pointing at snap site-packages. `PIP_PREFIX` silently redirects every
-  `pip install` out of the venv, so installs "succeed" and imports still fail. Use:
+- **Build the venv on Python 3.12.** macOS ships **3.14** as `python3`, and `chromadb` (the
+  `[rag]` extra) has no 3.14 wheels yet, so an install on 3.14 fails at the C-extension build.
+  Use Homebrew's 3.12 explicitly:
 
   ```bash
-  env -u PIP_PREFIX -u PYTHONPATH -u PIP_BREAK_SYSTEM_PACKAGES .venv/bin/python -m pip install -e ".[dev]"
-  env -u PYTHONPATH .venv/bin/lag run "..."
-  env -u PYTHONPATH .venv/bin/python -m pytest
+  /opt/homebrew/bin/python3.12 -m venv .venv
+  .venv/bin/python -m pip install -e ".[dev,rag]"
   ```
 
-- **`python3-venv` is not installed** and `/usr/bin/python3` has no `pip`. The venv here was
-  bootstrapped with `python3 -m venv --without-pip` + `get-pip.py`. Recreating it needs the
-  same dance (or `sudo apt install python3.12-venv`).
-- The original `.venv` was built for **Python 3.14** on the old machine; this box has 3.12,
-  so its `site-packages` was invisible to the interpreter. It has been rebuilt against 3.12.
-- **`ssh` and `~/.ssh` are unreachable** from inside the snap. Use `gh` (authenticated, HTTPS)
-  for anything GitHub, or have the user run ssh commands themselves with the `!` prefix.
+- **No `env -u` dance needed** — the `PIP_PREFIX` / `PYTHONPATH` / ssh traps below are
+  snap-confinement artifacts specific to the Ubuntu box. On the Mac, `.venv/bin/lag`,
+  `.venv/bin/python -m pytest`, `ollama`, and `ssh` all just work.
+- `gh` is authenticated over HTTPS here and `ssh` reaches GitHub; either works.
 
-### Models
+### Models (Mac)
 
-`config.yaml` (gitignored) is mapped to what is actually pulled here — `ministral-3:8b`
-(orchestrator) and `qwen3.5:4b` (everything else). The nine personas were likewise remapped
-off `qwen3:8b` / `qwen3:4b` / `qwen2.5-coder:7b`, none of which are installed. `deepseek-r1:8b`
-is present but deliberately unmapped: R1 distills make poor orchestrators here (weak
-structured output, thinking tokens wreck loop latency).
+`config.yaml` (gitignored) is mapped to what is pulled on the Mac:
 
-`nomic-embed-text` is pulled, and `.chroma/` holds an ingest of `docs/` (9 chunks).
+| Role | Tag | Personas on it |
+|------|-----|----------------|
+| `orchestrator` | `qwen3:14b` | architect, senior_dev |
+| `worker` | `qwen3:8b` | analyst, biz_analyst, design, research |
+| `coder` | `qwen2.5-coder:7b` | dev, tester, dev_research |
+| `fast` | `llama3.2:3b` | unassigned |
+| `embed` | `nomic-embed-text` | retrieval only (768-dim) |
 
-Note: `ollama` is **not on PATH** inside the snap sandbox. Drive it over HTTP
-(`http://localhost:11434/api/pull`, `/api/tags`) or have the user run it in their own shell.
+The ASUS ran a smaller set (`ministral-3:8b` orchestrator, `qwen3.5:4b` worker); the M4
+handles the 14B orchestrator and `num_ctx: 32768` comfortably. `deepseek-r1:*` is present but
+deliberately **unmapped**: R1 distills make poor orchestrators (weak structured output,
+thinking tokens wreck loop latency). Personas name roles, never tags, so this is all one
+`config.yaml` — no persona edits.
+
+`nomic-embed-text` is pulled, and `.chroma/` holds an ingest of `docs/` (9 chunks). Memory
+and `.chroma/` are gitignored and per-machine, so the Mac grew its own from a fresh ingest.
 
 ## Architecture
 
@@ -143,29 +151,28 @@ Two residual rough edges remain, both real:
 
 ## Commands
 
-Prefixes matter here — see the environment landmines above.
+Mac (primary). No `env -u` prefixes here — those are Ubuntu-only, see the appendix.
 
 ```bash
-# install (note the unset vars; PIP_PREFIX will otherwise redirect out of the venv)
-env -u PIP_PREFIX -u PYTHONPATH -u PIP_BREAK_SYSTEM_PACKAGES \
-    .venv/bin/python -m pip install -e ".[dev]"     # core + pytest
-#   ...install -e ".[rag]"                          # + chromadb, Phase 6
+.venv/bin/python -m pip install -e ".[dev,rag]"    # core + pytest + chromadb
 
-env -u PYTHONPATH .venv/bin/lag run "list the files here and tell me what this project is"
-env -u PYTHONPATH .venv/bin/lag run "same thing" --mcp     # routes through the MCP server
-env -u PYTHONPATH .venv/bin/lag swarm "design a tiny URL shortener" --mode crew
+.venv/bin/lag run "list the files here and tell me what this project is"
+.venv/bin/lag run "same thing" --mcp               # routes through the MCP server
+.venv/bin/lag swarm "design a tiny URL shortener" --mode crew
 
-env -u PYTHONPATH .venv/bin/python servers/tools_server.py  # standalone; shows real tracebacks
-env -u PYTHONPATH .venv/bin/python -m pytest
+.venv/bin/python servers/tools_server.py           # standalone; shows real tracebacks
+.venv/bin/python servers/rag_server.py --ingest docs/   # populate .chroma
+.venv/bin/python -m pytest                         # 105 passing
 
-ollama pull nomic-embed-text          # required before Phase 6
+ollama pull nomic-embed-text                       # required before Phase 6
 ```
 
-`cp config.example.yaml config.yaml` if starting on a new machine — but note the example
-names models that are not pulled here.
+`cp config.example.yaml config.yaml` when starting on a new machine, then map the five roles
+to models you have actually pulled (`ollama list` for exact tags).
 
-Runs are slow: CPU-only inference, ~1–3 min for a single tool-calling round trip, and a
-four-call `crew` run takes considerably longer. Background long runs rather than waiting.
+On the M4, a single tool-calling round trip is ~30–40s including model load; a four-call
+`crew` run takes longer. Background long runs rather than blocking on them. (The CPU-only
+ASUS was several times slower — ~1–3 min per round trip.)
 
 ## Config
 
@@ -237,11 +244,14 @@ retrieval-only `embed`.
 
 ## Context window
 
-Ollama ignores a model's trained context and allocates **4096** by default. `ministral-3:8b`
-is trained for 262144. Always construct clients via `OllamaClient.from_config` so
-`ollama.num_ctx` and `keep_alive` are applied; constructing `OllamaClient(...)` directly
-silently reverts to 4096 and the model starts dropping the top of its own conversation with no
-error. Budget ~130 KB/token of KV cache for an 8B model.
+Ollama ignores a model's trained context and allocates **4096** by default. The Mac's
+`qwen3:8b`/`qwen3:14b` are trained for far more (256K), so leaving `num_ctx` unset runs them
+at a fraction of their window and silently drops the oldest tokens. Always construct clients
+via `OllamaClient.from_config` so `ollama.num_ctx` and `keep_alive` are applied; constructing
+`OllamaClient(...)` directly silently reverts to 4096 and the model starts dropping the top of
+its own conversation with no error. Budget ~130 KB/token of KV cache for an 8B model — the M4's
+unified memory makes the current **`num_ctx: 32768`** (~4.2 GB) cheap; the 14 GB ASUS stayed at
+8192.
 
 ## Known loose ends
 
@@ -282,3 +292,27 @@ These are deliberate, documented in `files/MORNING_BRIEF.md` §4 — not bugs to
   verify any new rule with `git check-ignore -v <path>`.
 - Privacy stance is load-bearing here ("your data never leaves the machine"). Don't introduce
   cloud calls, telemetry, or API-key-requiring dependencies.
+
+## Appendix — Ubuntu box (secondary)
+
+The kit was built on a CPU-only Ubuntu machine running Claude Code under **snap confinement**,
+which adds traps that do **not** exist on the Mac. Kept here in case work resumes there.
+
+- **`PIP_PREFIX=/home/hinzmo/snap/claude-code/common` is exported globally** by snap. It
+  silently redirects every `pip install` *out of any venv* — installs report success, imports
+  still fail. `PYTHONPATH` likewise points at snap site-packages and shadows the venv. Run
+  everything with the vars cleared:
+
+  ```bash
+  env -u PIP_PREFIX -u PYTHONPATH -u PIP_BREAK_SYSTEM_PACKAGES .venv/bin/python -m pip install -e ".[dev,rag]"
+  env -u PYTHONPATH .venv/bin/lag run "..."
+  env -u PYTHONPATH .venv/bin/python -m pytest
+  ```
+
+- **`python3-venv` isn't installed** and `/usr/bin/python3` has no `pip`; the venv was
+  bootstrapped with `python3 -m venv --without-pip` + `get-pip.py` (or `sudo apt install
+  python3.12-venv`). The box has Python 3.12, so the `[rag]` extra installs there too.
+- **`ssh`, `~/.ssh`, and `ollama` are unreachable from inside the snap.** Use `gh` (HTTPS) for
+  GitHub, and drive Ollama over HTTP (`http://localhost:11434/api/pull`, `/api/tags`).
+- Models were a smaller set: `ministral-3:8b` (orchestrator), `qwen3.5:4b` (worker),
+  `num_ctx: 8192` for the 14 GB box.

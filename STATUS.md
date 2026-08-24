@@ -8,7 +8,9 @@ for current state.
 
 ## Where it stands
 
-All six phases run and are smoke-tested on the Ubuntu box. **100 tests passing.**
+All six phases run and are smoke-tested. **105 tests passing.** Primary box is now the
+**MacBook Air M4** (ported 2026-08-21); the CPU-only Ubuntu machine it was built on is
+secondary. On the Mac, both the direct and `--mcp` tool paths are verified end to end.
 
 | Phase | What | State |
 |------:|------|-------|
@@ -87,9 +89,9 @@ and every swarm agent. KV cache costs roughly **130 KB/token** for an 8B model:
 | num_ctx | KV cache | Suitable for |
 |--------:|---------:|--------------|
 | 4096 | ~0.5 GB | Ollama's default — too small here |
-| 8192 | ~1.0 GB | **current setting**, 14 GB CPU-only box |
+| 8192 | ~1.0 GB | the 14 GB CPU-only ASUS |
 | 16384 | ~2.1 GB | comfortable if little else is running |
-| 32768 | ~4.2 GB | M4 unified memory |
+| 32768 | ~4.2 GB | **current setting** — M4 unified memory |
 
 ---
 
@@ -119,35 +121,37 @@ from Ollama mid-run.
 **Adding a model:** `ollama pull <tag>`, then point a role at it in `config.yaml`. That's
 the whole procedure.
 
-## Installed models (Ubuntu box)
+## Mapped models (Mac M4 — primary)
 
-| Model | Params | Trained ctx | Role |
-|-------|-------:|------------:|------|
-| `ministral-3:8b` | 8.9B Q4_K_M | 262144 | orchestrator + chat |
-| `qwen3.5:4b` | 4.7B Q4_K_M | 262144 | worker / specialists |
-| `deepseek-r1:8b` | 8.2B Q4_K_M | 131072 | **unmapped on purpose** |
-| `nomic-embed-text` | 137M F16 | 2048 | embeddings, 768-dim |
+| Role | Tag | Notes |
+|------|-----|-------|
+| `orchestrator` | `qwen3:14b` | the M4 runs a 14B orchestrator comfortably |
+| `worker` | `qwen3:8b` | specialists (ASUS used `qwen3:4b`, not pulled here) |
+| `coder` | `qwen2.5-coder:7b` | dev / tester / dev_research |
+| `fast` | `llama3.2:3b` | unassigned, free for cheap calls |
+| `embed` | `nomic-embed-text` | 768-dim embeddings |
 
-R1 distills make poor orchestrators — weak structured output, and thinking tokens wreck loop
-latency. It stays installed but unmapped.
+`deepseek-r1:*` is installed but **unmapped on purpose** — R1 distills make poor orchestrators
+(weak structured output, and thinking tokens wreck loop latency). The ASUS ran a smaller set
+(`ministral-3:8b` orchestrator, `qwen3.5:4b` worker) at `num_ctx: 8192`.
 
 ---
 
 ## Commands
 
-Prefixes matter on the Ubuntu box — see *Environment traps*.
+Mac (primary). The `env -u` prefixes are Ubuntu-only — see *Environment traps*.
 
 ```bash
-env -u PIP_PREFIX -u PYTHONPATH -u PIP_BREAK_SYSTEM_PACKAGES \
-    .venv/bin/python -m pip install -e ".[dev,rag]"
+/opt/homebrew/bin/python3.12 -m venv .venv          # 3.14 lacks chromadb wheels
+.venv/bin/python -m pip install -e ".[dev,rag]"
 
-env -u PYTHONPATH .venv/bin/lag run "what is this project?"
-env -u PYTHONPATH .venv/bin/lag run "same thing" --mcp
-env -u PYTHONPATH .venv/bin/lag swarm "design a url shortener" --mode crew
+.venv/bin/lag run "what is this project?"
+.venv/bin/lag run "same thing" --mcp
+.venv/bin/lag swarm "design a url shortener" --mode crew
 
-env -u PYTHONPATH .venv/bin/python servers/rag_server.py --ingest docs/
-env -u PYTHONPATH .venv/bin/python servers/tools_server.py   # standalone, real tracebacks
-env -u PYTHONPATH .venv/bin/python -m pytest
+.venv/bin/python servers/rag_server.py --ingest docs/
+.venv/bin/python servers/tools_server.py            # standalone, real tracebacks
+.venv/bin/python -m pytest                           # 105 passing
 ```
 
 ---
@@ -157,8 +161,10 @@ env -u PYTHONPATH .venv/bin/python -m pytest
 The repo carries everything except per-machine config, which is gitignored by design.
 
 1. `git clone git@github.com:Hinzmo/local-agent-kit.git && cd local-agent-kit`
-2. `python3 -m venv .venv && .venv/bin/python -m pip install -e ".[dev,rag]"`
-   — no `env -u` dance needed; the snap traps are Ubuntu-only.
+2. `/opt/homebrew/bin/python3.12 -m venv .venv && .venv/bin/python -m pip install -e ".[dev,rag]"`
+   — **use 3.12, not the default `python3`**: macOS ships 3.14, which has no `chromadb` wheel
+   yet, so the `[rag]` install fails on it. No `env -u` dance needed; the snap traps are
+   Ubuntu-only. `brew install python@3.12` if it's missing.
 3. `cp config.example.yaml config.yaml`
 4. `ollama pull` the models you want, then **edit `config.yaml`**:
    - the M4 handles a larger orchestrator comfortably — `qwen3:14b` was the original intent
@@ -166,7 +172,7 @@ The repo carries everything except per-machine config, which is gitignored by de
 5. **Personas need no edits** — they name roles, so just point the five roles in
    `config.yaml` at whatever you pulled. `ollama list` gives the exact tags.
 6. `ollama pull nomic-embed-text`, then `python servers/rag_server.py --ingest docs/`
-7. `pytest` — expect 100 passing.
+7. `pytest` — expect 105 passing.
 
 `.chroma/` and `memory/` are gitignored, so **remembered facts do not sync between machines.**
 Each box accumulates its own memory. See *What's left* if you want that shared.
