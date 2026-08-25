@@ -72,38 +72,77 @@ def _input_schema(tool) -> dict:
 
 
 class MCPToolProvider:
-    """Tool provider backed by an MCP server. Same interface as LocalToolProvider."""
+    """Tool provider backed by one or more MCP servers. Same interface as LocalToolProvider.
 
-    def __init__(self, bridge: MCPBridge):
-        self.bridge = bridge
+    Holds a *list* of bridges so a single agent loop can reach tools spread across several
+    servers — e.g. tools_server.py (fs, shell, search) plus rag_server.py
+    (search_knowledge_base) — without knowing they live in different processes. `schemas()`
+    merges every server's tools into one flat list; `call()` routes each invocation to the
+    bridge that owns the named tool. The loop still sees the same duck-typed (schemas, call)
+    surface as the single-server and in-process providers, so nothing above this layer changes.
+    """
+
+    #: Servers from_config spawns, in precedence order (earlier wins a name collision).
+    DEFAULT_SERVERS = ("servers/tools_server.py", "servers/rag_server.py")
+
+    def __init__(self, bridges):
+        # Accept a single bridge or an iterable of them, normalized to a list. A bridge is a
+        # lone object; a list/tuple is several. Keeping single-bridge construction working
+        # means existing callers and tests — MCPToolProvider(one_bridge) — are unchanged.
+        self.bridges = list(bridges) if isinstance(bridges, (list, tuple)) else [bridges]
 
     @classmethod
-    def from_config(cls, cfg: dict, server: str = "servers/tools_server.py"):
-        # sys.executable, not "python": the bare name is absent on plenty of
-        # distros (Ubuntu ships only python3), and even where it resolves it is
-        # the *system* interpreter, which cannot import lag. A server that dies
-        # on import leaves stdio_client waiting on a pipe that never speaks —
-        # which is what the "--mcp hangs" symptom actually was.
-        path = Path(server)
-        if not path.is_absolute():
-            path = _REPO_ROOT / path
-        return cls(MCPBridge(sys.executable, [str(path)]))
+    def from_config(cls, cfg: dict, servers: tuple[str, ...] | None = None):
+        # sys.executable, not "python": the bare name is absent on plenty of distros (Ubuntu
+        # ships only python3), and even where it resolves it is the *system* interpreter,
+        # which cannot import lag. A server that dies on import leaves stdio_client waiting on
+        # a pipe that never speaks — which is what the "--mcp hangs" symptom actually was.
+        bridges = []
+        for server in (servers or cls.DEFAULT_SERVERS):
+            path = Path(server)
+            if not path.is_absolute():
+                path = _REPO_ROOT / path
+            bridges.append(MCPBridge(sys.executable, [str(path)]))
+        return cls(bridges)
+
+    def _tool_owner(self, name: str):
+        """Return the first bridge exposing `name`, or None. First bridge wins a collision."""
+        for bridge in self.bridges:
+            if any(getattr(t, "name", None) == name for t in bridge.tools):
+                return bridge
+        return None
 
     def schemas(self):
-        # MCP gives us {name, description, input schema (JSON Schema)}.
-        # Ollama wants {type: function, function: {name, description, parameters}}.
-        # The translation is basically: input schema -> parameters.
-        return [
-            {
-                "type": "function",
-                "function": {
-                    "name": t.name,
-                    "description": t.description or "",
-                    "parameters": _input_schema(t),
-                },
-            }
-            for t in self.bridge.tools
-        ]
+        # MCP gives us {name, description, input schema (JSON Schema)}; Ollama wants
+        # {type: function, function: {name, description, parameters}}. The translation is
+        # basically input schema -> parameters. Tools from every bridge are merged into one
+        # flat list; a name seen twice is emitted once (first server wins, matching call()).
+        seen: set[str] = set()
+        out = []
+        for bridge in self.bridges:
+            for t in bridge.tools:
+                if t.name in seen:
+                    continue
+                seen.add(t.name)
+                out.append({
+                    "type": "function",
+                    "function": {
+                        "name": t.name,
+                        "description": t.description or "",
+                        "parameters": _input_schema(t),
+                    },
+                })
+        return out
 
     def call(self, name: str, args: dict) -> str:
-        return self.bridge.call(name, args)
+        owner = self._tool_owner(name)
+        if owner is None:
+            # One bridge: delegate anyway — it's the only place the call can go, and this
+            # keeps behaviour identical to the pre-merge single-server provider. Several
+            # bridges: an unroutable name is a real error, returned as a string (never
+            # raised) so the agent loop can recover.
+            if len(self.bridges) == 1:
+                owner = self.bridges[0]
+            else:
+                return f"unknown tool: {name}"
+        return owner.call(name, args)

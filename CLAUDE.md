@@ -194,8 +194,8 @@ Verified working: `--ingest` chunks and embeds via `nomic-embed-text`, and
 `search_knowledge_base` answers over the real MCP boundary.
 
 ```bash
-env -u PYTHONPATH .venv/bin/python servers/rag_server.py --ingest docs/
-env -u PYTHONPATH .venv/bin/python servers/rag_server.py     # server mode
+.venv/bin/python servers/rag_server.py --ingest docs/
+.venv/bin/python servers/rag_server.py     # server mode
 ```
 
 Two traps already hit and fixed here, worth remembering if you write another server:
@@ -207,9 +207,11 @@ Two traps already hit and fixed here, worth remembering if you write another ser
   channel, so any stray `print` corrupts the stream and `initialize` fails. Diagnostics go to
   stderr. This applies to every MCP server in this repo.
 
-**Not wired into the harness yet.** `MCPToolProvider.from_config` spawns only
-`tools_server.py`. Serving both means spawning both and merging their schemas — the
-`schemas()`/`call()` interface already supports it; nothing in the loop needs to change.
+**Wired into the harness.** `MCPToolProvider.from_config` spawns both `tools_server.py` and
+`rag_server.py`; the provider holds a list of bridges, merges their schemas into one flat
+toolset (first server wins a name collision), and routes each `call()` to the owning bridge.
+The agent loop was untouched — `--mcp` now exposes all nine tools. One caveat: run `lag` from
+the repo root, since the RAG server resolves its store as `./.chroma` relative to cwd.
 
 > **`STATUS.md` is the living status doc** — current state, how it works, what's left, and Mac
 > setup. Update it when behaviour changes; this file stays focused on working rules.

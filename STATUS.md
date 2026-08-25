@@ -227,14 +227,22 @@ Every one of these was found by running the code, not reading it.
 
 ## What's left
 
-**Wire both MCP servers into the harness.** `MCPToolProvider.from_config` still spawns only
-`tools_server.py`. Serving retrieval to a live agent loop means spawning both and merging
-their schemas — the provider interface already supports it and the loop needs no changes.
-This is the single highest-value remaining task; until it lands, "always-on retrieval" is
-true in the UI mockup and in direct calls, but not yet in `lag run`.
+**~~Wire both MCP servers into the harness.~~ Done.** `MCPToolProvider.from_config` now spawns
+both `tools_server.py` and `rag_server.py`; the provider holds a list of bridges, merges their
+schemas into one flat toolset (first server wins a name collision), and routes each `call()`
+to the owning bridge. The agent loop was untouched. Verified live: `lag run "...search the
+knowledge base..." --mcp` spawns the RAG server and the model calls `search_knowledge_base`.
+So "always-on retrieval" is now true in `lag run --mcp`, not just in direct calls.
+
+**`lag run --mcp` must be invoked from the repo root.** The RAG server resolves its store as
+`./.chroma` relative to cwd, so running the harness from elsewhere points it at a missing/empty
+collection (the tools server is unaffected — its tools take explicit paths). Small follow-up:
+resolve `DB_PATH` against the repo root, or pass `cwd` through `StdioServerParameters`.
 
 **`MCPBridge` never shuts down.** No `close()`, so the subprocess and its daemon event loop
-leak for the process lifetime. Fine for one-shot CLI runs, wrong for anything long-lived.
+leak for the process lifetime — and it's **two** subprocesses now that both servers spawn.
+Fine for one-shot CLI runs, wrong for anything long-lived; the clean fix is keeping the whole
+run inside `async with` blocks.
 
 **`thinking_mode` in personas is metadata only** — parsed, never passed to
 `ollama.chat(think=...)`. Roughly two lines in `ollama_client.py`.
