@@ -13,6 +13,7 @@ dependencies = [
 [project.optional-dependencies]
 rag = ["chromadb>=0.5", "ollama>=0.4"]   # Phase 6 — vector store + local embeddings
 dev = ["pytest>=8.0"]
+study = ["pypdf>=5.0"]   # PDF course material for `lag study`
 
 [project.scripts]
 lag = "lag.cli:app"

@@ -92,13 +92,26 @@ def embed_batch(texts: list[str], model: str = EMBED_MODEL,
     return [client.embeddings(model=model, prompt=t)["embedding"] for t in texts]
 
 
-def get_collection(db_path: str = DB_PATH):
-    """Open (or create) the shared collection with cosine distance."""
+def get_collection(db_path: str = DB_PATH, collection: str = COLLECTION):
+    """Open (or create) a collection with cosine distance.
+
+    Collections are the isolation boundary. The harness uses one shared
+    collection; `lag study` gives each course its own, so a question about
+    organic chemistry can't retrieve last term's history notes.
+    """
     client = chromadb.PersistentClient(path=db_path)
     return client.get_or_create_collection(
-        name=COLLECTION,
+        name=collection,
         metadata={"hnsw:space": "cosine"},
     )
+
+
+def list_collections(db_path: str = DB_PATH) -> list[str]:
+    """Names of every collection in the store."""
+    try:
+        return [c.name for c in chromadb.PersistentClient(path=db_path).list_collections()]
+    except Exception:  # noqa: BLE001 - a missing/locked store is not fatal here
+        return []
 
 
 def _ids_for(texts: list[str], prefix: str) -> list[str]:
@@ -114,13 +127,13 @@ def _ids_for(texts: list[str], prefix: str) -> list[str]:
 
 
 def add_texts(texts: list[str], metadatas: list[dict], *, prefix: str = "chunk",
-              db_path: str = DB_PATH, model: str = EMBED_MODEL,
-              host: str = OLLAMA_HOST) -> int:
-    """Embed texts and upsert them into the collection. Returns the count."""
+              db_path: str = DB_PATH, collection: str = COLLECTION,
+              model: str = EMBED_MODEL, host: str = OLLAMA_HOST) -> int:
+    """Embed texts and upsert them into a collection. Returns the count."""
     if not texts:
         return 0
     embeddings = embed_batch(texts, model=model, host=host)
-    get_collection(db_path).upsert(
+    get_collection(db_path, collection).upsert(
         ids=_ids_for(texts, prefix),
         embeddings=embeddings,
         documents=texts,
@@ -180,8 +193,8 @@ class RAGEngine:
     """Stateful retrieval engine over the shared collection."""
 
     def __init__(self, db_path: str = DB_PATH, model: str = EMBED_MODEL,
-                 host: str = OLLAMA_HOST):
-        self.collection = get_collection(db_path)
+                 host: str = OLLAMA_HOST, collection: str = COLLECTION):
+        self.collection = get_collection(db_path, collection)
         self.embed_model = model
         self.ollama_host = host
 
@@ -193,8 +206,9 @@ class RAGEngine:
         """
         client = ollama.Client(host=self.ollama_host)
         q = client.embeddings(model=self.embed_model, prompt=query)["embedding"]
+        n = min(k, max(self.collection.count(), 1))
         res = self.collection.query(
-            query_embeddings=[q], n_results=k,
+            query_embeddings=[q], n_results=n,
             include=["documents", "metadatas", "distances"],
         )
         out = []
