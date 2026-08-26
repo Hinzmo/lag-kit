@@ -26,6 +26,9 @@ data/
 # Phase 6 vector store
 .chroma/
 
+# `lag study` progress and flashcard decks — per-machine, like memory/
+study/
+
 # ── OS ───────────────────────────────────────────────────
 .DS_Store
 ._*
