@@ -38,9 +38,15 @@ ollama:
   # them at a fraction of their window and silently drops the oldest tokens. With
   # always-on retrieval plus eight tool schemas, 4096 overflows fast.
   #
-  # KV cache costs roughly 130 KB/token for an 8B model, so:
-  #     8192  ≈ 1.0 GB   safe on a 16 GB box alongside a 6 GB model
-  #    16384  ≈ 2.1 GB   comfortable if little else is running
-  #    32768  ≈ 4.2 GB   Mac M4 territory (the M4 config.yaml uses this)
-  # 8192 is a portable default; the Mac's real config.yaml raises it to 32768.
+  # num_ctx sets the max window AND the KV cache pre-allocated at load, so it's a
+  # memory dial, not a speed dial: measured on the M4, raising it left generation
+  # speed (~19 tok/s) and load time flat — only the footprint grew. Total in-memory
+  # size (model weights + KV), measured:
+  #             qwen3:8b     qwen3:14b
+  #     8192     6.5 GB       10.3 GB
+  #    16384     7.4 GB       12.3 GB
+  #    32768     9.8 GB       15.0 GB   <- 14b@32k brushes swap on a 16 GB box
+  # On a 16 GB M4 the safe pick with a 14B orchestrator is 8192 (~5 GB free); the
+  # tradeoff is a smaller window, so lean on the memory tools (remember +
+  # search_knowledge_base) to offload long-term state to the vector store.
   num_ctx: 8192

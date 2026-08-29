@@ -84,14 +84,30 @@ dropping the oldest tokens. The symptom is a model that "forgets" the top of its
 conversation — never an error.
 
 `config.yaml → ollama.num_ctx` is now wired through `OllamaClient.from_config` to both the CLI
-and every swarm agent. KV cache costs roughly **130 KB/token** for an 8B model:
+and every swarm agent. Measured on the M4: num_ctx is a **memory dial, not a speed dial** —
+raising it left generation (~19 tok/s) and load time flat; only the footprint (weights + KV
+pre-allocated at load) grew.
 
-| num_ctx | KV cache | Suitable for |
-|--------:|---------:|--------------|
-| 4096 | ~0.5 GB | Ollama's default — too small here |
-| 8192 | ~1.0 GB | the 14 GB CPU-only ASUS |
-| 16384 | ~2.1 GB | comfortable if little else is running |
-| 32768 | ~4.2 GB | **current setting** — M4 unified memory |
+| num_ctx | qwen3:8b | qwen3:14b | note |
+|--------:|---------:|----------:|------|
+| 8192 | 6.5 GB | 10.3 GB | **current** on the 16 GB M4 (14b, ~5 GB free) |
+| 16384 | 7.4 GB | 12.3 GB | safe for a lone 14b if little else runs |
+| 32768 | 9.8 GB | 15.0 GB | 14b brushes disk swap on 16 GB — avoid |
+
+### Single resident model on 16 GB
+
+Two *different* chat models can't co-load on 16 GB (14b@8k 10.3 + 8b@8k 6.5 > 16), so true
+multi-model swarming isn't viable locally — it belongs on bigger/cloud hardware. Instead every
+chat role points at **one** model (`qwen3:14b`): the orchestrator stays resident and delegating
+to a persona changes the *system prompt*, not the weights — no swaps. `ollama ps` during a
+`crew` run shows just `qwen3:14b` + `nomic-embed-text` (~10.7 GB). `max_loaded_models: 2` here
+means *chat model + embedder*, not two chat models — set it to 1 and every KB search would evict
+and reload the 14b.
+
+`num_ctx: 8192` keeps that safe, and the small window is covered by offloading state to memory:
+`remember` writes into ChromaDB, `search_knowledge_base` reads it back. To give the orchestrator
+that loop in a swarm, run with `--mcp` (`lag swarm "..." --mcp`), which backs every agent with
+both MCP servers instead of only in-process tools.
 
 ---
 

@@ -34,13 +34,24 @@ def swarm(
     task: str,
     mode: str = typer.Option(None, help="pipeline | parallel | crew"),
     agents: str = typer.Option("architect_agent,dev_agent,senior_dev_agent", help="Comma-separated persona names (first is coordinator in crew mode)."),
+    mcp: bool = typer.Option(False, "--mcp", help="Give every agent the MCP toolset (fs, shell, web, memory, and search_knowledge_base) instead of only in-process tools."),
 ):
     """Run a multi-agent swarm on a task."""
     from .swarm import Swarm
     cfg = load_config()
     mode = mode or cfg["swarm"]["default_mode"]
     names = [a.strip() for a in agents.split(",")]
-    print(Swarm.from_personas(names, cfg).run(task, mode=mode))
+
+    # With --mcp, all agents share ONE provider backed by both MCP servers, so the
+    # orchestrator gains search_knowledge_base and can pull back facts it stored with
+    # remember — the memory-offload loop that makes a small num_ctx workable. Without
+    # it, from_personas falls back to in-process tools (no semantic KB search).
+    provider = None
+    if mcp:
+        from .mcp_client import MCPToolProvider
+        provider = MCPToolProvider.from_config(cfg)
+
+    print(Swarm.from_personas(names, cfg, provider).run(task, mode=mode))
 
 
 study_app = typer.Typer(help="Course brain: study your own material, then get drilled on it.")

@@ -159,6 +159,7 @@ Mac (primary). No `env -u` prefixes here — those are Ubuntu-only, see the appe
 .venv/bin/lag run "list the files here and tell me what this project is"
 .venv/bin/lag run "same thing" --mcp               # routes through the MCP server
 .venv/bin/lag swarm "design a tiny URL shortener" --mode crew
+.venv/bin/lag swarm "...use the knowledge base..." --mcp   # agents get the MCP toolset
 
 .venv/bin/python servers/tools_server.py           # standalone; shows real tracebacks
 .venv/bin/python servers/rag_server.py --ingest docs/   # populate .chroma
@@ -251,9 +252,10 @@ Ollama ignores a model's trained context and allocates **4096** by default. The 
 at a fraction of their window and silently drops the oldest tokens. Always construct clients
 via `OllamaClient.from_config` so `ollama.num_ctx` and `keep_alive` are applied; constructing
 `OllamaClient(...)` directly silently reverts to 4096 and the model starts dropping the top of
-its own conversation with no error. Budget ~130 KB/token of KV cache for an 8B model — the M4's
-unified memory makes the current **`num_ctx: 32768`** (~4.2 GB) cheap; the 14 GB ASUS stayed at
-8192.
+its own conversation with no error. num_ctx is a memory dial, not a speed dial (measured: gen
+speed and load time stay flat as it grows; only the footprint does). On the 16 GB M4 with a
+resident `qwen3:14b`, **`num_ctx: 8192`** is the safe setting (~10.3 GB, ~5 GB free); 32768 would
+put the 14b at ~15 GB and brush disk swap. See STATUS.md "Single resident model on 16 GB".
 
 ## Known loose ends
 
