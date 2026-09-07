@@ -969,6 +969,55 @@ async function swarmTurn(q, mode){
   tick();
 }
 
+/* ══ real turn — talks to the backend ═══════════════════════════════════ */
+async function realTurn(q, mode){
+  const th = thinkingLine();
+  th.set(mode ? `running swarm · ${mode}` : "thinking");
+  loadModel(S.model);
+  let data;
+  try{
+    const res = await fetch("/api/run", {
+      method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({
+        prompt:q,
+        mode: mode || "solo",
+        agents: (S.project && S.project.orch==="manual" && S.project.assign.length)
+          ? S.project.assign.map(a=>a.n).join(",") : null,
+      }),
+    });
+    data = await res.json();
+  } finally { th.kill(); }
+  if(!data || data.error){
+    const b = say("fault","msg-ai"); b.style.color="var(--fault)";
+    b.textContent = (data && data.error) || "no response from server";
+    return;
+  }
+  const box = say(`lag · ${data.model || S.model}`, "msg-ai");
+  for(const p of paras(data.answer || "(empty answer)")){
+    const n = el("p"); box.appendChild(n); await typeInto(n, p);
+  }
+}
+
+/* pull real system state in and correct the mockup's placeholder labels */
+async function loadState(){
+  try{
+    const res = await fetch("/api/state"); if(!res.ok) return;
+    const st = await res.json();
+    if(st.chat_model){
+      S.model = st.chat_model;
+      const mm = $("#m-model"); if(mm) mm.textContent = st.chat_model;
+      $$(".tag.model").forEach(t => t.textContent = st.chat_model);
+    }
+    const empty = $(".empty");
+    if(empty && st.chat_model){
+      const nt = (st.tools||[]).length + (st.rag_tools||[]).length;
+      empty.innerHTML =
+        `<b>ready</b>${esc(st.chat_model)} · ${st.num_ctx||8192} ctx · retrieval active · `+
+        `${nt} tools over mcp<br>ask a question, or start a project from the top bar`;
+    }
+  }catch(e){ /* backend not up yet — keep the placeholders */ }
+}
+
 /* ══ execute ════════════════════════════════════════════════════════════ */
 async function execute(){
   if(S.running) return;
@@ -984,8 +1033,7 @@ async function execute(){
   u.textContent = q;
 
   try{
-    if(S.swarm) await swarmTurn(q, S.swarm);
-    else        await soloTurn(q);
+    await realTurn(q, S.swarm);
   }catch(err){
     const b = say("fault","msg-ai"); b.style.color="var(--fault)"; b.textContent = String(err);
   }
@@ -1271,6 +1319,7 @@ if(!RM){
   $("#boot").classList.add("done");
   setTimeout(() => { const b = $("#boot"); if(b) b.remove(); }, 600);
   bootWire();
+  loadState();
   $("#input").focus({preventScroll:true});
 })();
 

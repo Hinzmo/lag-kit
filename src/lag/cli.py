@@ -54,6 +54,25 @@ def swarm(
     print(Swarm.from_personas(names, cfg, provider).run(task, mode=mode))
 
 
+@app.command()
+def serve(
+    host: str = typer.Option("127.0.0.1", help="Bind address."),
+    port: int = typer.Option(8765, help="Port."),
+):
+    """Launch the local web console (the phosphor UI) over the harness.
+
+    Serves ui/console.html plus a small JSON API that wraps the same library the
+    CLI uses. Everything binds to localhost — no cloud, no keys. Run from the repo
+    root so the RAG server finds ./.chroma (the same caveat as `--mcp`).
+    """
+    import uvicorn
+
+    from .web import app as web_app
+
+    typer.echo(f"lag console → http://{host}:{port}   (Ctrl-C to stop)")
+    uvicorn.run(web_app, host=host, port=port, log_level="info")
+
+
 study_app = typer.Typer(help="Course brain: study your own material, then get drilled on it.")
 app.add_typer(study_app, name="study")
 
