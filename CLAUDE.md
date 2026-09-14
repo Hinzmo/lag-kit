@@ -20,13 +20,13 @@ to end, including RAG.
 **Primary dev box is now the MacBook Air M4** (ported here 2026-08-21 for the better specs).
 The CPU-only Ubuntu machine it was built on is the secondary box; its snap-confinement traps
 are real but Ubuntu-only, quarantined in the appendix at the bottom of this file. On the Mac:
-105 tests pass, and `lag run` tool-calls correctly through both the direct and `--mcp` paths.
+231 tests pass, and `lag run` tool-calls correctly through both the direct and `--mcp` paths.
 
 ```
-src/lag/     config.py  tools.py  ollama_client.py  mcp_client.py  swarm.py  cli.py
+src/lag/     config.py  tools.py  ollama_client.py  mcp_client.py  pipeline.py  agent.py  cli.py  web.py
 servers/     tools_server.py  rag_server.py
 personas/    nine YAMLs
-tests/       64 tests, all passing
+tests/       231 tests, all passing
 docs/        RAG_SETUP.md  VECTORS_AND_SEARCH.md
 ```
 
@@ -67,16 +67,38 @@ defect. It registers fine.
 
 | Role | Tag | Personas on it |
 |------|-----|----------------|
-| `orchestrator` | `qwen3:14b` | architect, senior_dev |
+| `orchestrator` | `ornith:latest` | architect, senior_dev |
 | `worker` | `qwen3:8b` | analyst, biz_analyst, design, research |
-| `coder` | `qwen2.5-coder:7b` | dev, tester, dev_research |
-| `fast` | `llama3.2:3b` | unassigned |
+| `coder` | `qwen3:8b` | dev, tester, dev_research |
+| `fast` | `qwen3:8b` | unassigned |
 | `embed` | `nomic-embed-text` | retrieval only (768-dim) |
 
-The ASUS ran a smaller set (`ministral-3:8b` orchestrator, `qwen3.5:4b` worker); the M4
-handles the 14B orchestrator and `num_ctx: 32768` comfortably. `deepseek-r1:*` is present but
-deliberately **unmapped**: R1 distills make poor orchestrators (weak structured output,
-thinking tokens wreck loop latency). Personas name roles, never tags, so this is all one
+Remapped 2026-09-07 after an Ollama cleanup removed `qwen3:14b`, `qwen2.5-coder:7b`,
+`llama3.2:3b` and `qwen3:4b`. Two rules drove the new shape:
+
+- **Role models should support tools.** The loop is a tool-calling loop. This is no
+  longer fatal — `ollama_client.capabilities()` asks Ollama what a tag can do, and a
+  completion-only model runs *without* tools and says so (a `no_tools` event) rather
+  than failing the request. But it is a real downgrade: no file access, shell,
+  retrieval or memory, so replies come only from what the model already knows. On this
+  box `example/completion-only-8b` and `example/completion-only-mini` are
+  completion-only; `persona-model:latest` does support tools but ships a baked-in persona
+  that fights the persona system prompts.
+
+  Capability is **discovered, never hardcoded** — a newly pulled model is classified
+  correctly with no list to maintain. A failed probe returns an empty set, which
+  callers must read as *capable*: treating unknown as incapable would silently strip a
+  working model of every tool on one flaky status call. `thinking` is resolved the same
+  way, so a non-thinking tag is never asked to think.
+- **A role switch costs a full model reload** (~5s, measured), because only one chat
+  model stays resident. So every downstream role points at ONE tag: consecutive
+  pipeline stages then reuse the resident weights for free, and `ornith` — 9B qwen3.5,
+  tools + thinking, 262K trained window — spends its single load on the planning stage.
+
+Note `senior_dev` sits on `orchestrator`, so the default three-stage roster runs
+ornith → qwen3:8b → ornith and pays three loads. That is a deliberate trade (review is
+the hardest reasoning); move `senior_dev_agent` to `coder` in its persona if you would
+rather have the two-load run. Personas name roles, never tags, so this is all one
 `config.yaml` — no persona edits.
 
 `nomic-embed-text` is pulled, and `.chroma/` holds an ingest of `docs/` (9 chunks). Memory
@@ -158,12 +180,13 @@ Mac (primary). No `env -u` prefixes here — those are Ubuntu-only, see the appe
 
 .venv/bin/lag run "list the files here and tell me what this project is"
 .venv/bin/lag run "same thing" --mcp               # routes through the MCP server
-.venv/bin/lag swarm "design a tiny URL shortener" --mode crew
-.venv/bin/lag swarm "...use the knowledge base..." --mcp   # agents get the MCP toolset
+.venv/bin/lag pipeline "design a tiny URL shortener"
+.venv/bin/lag pipeline "...use the knowledge base..." --mcp   # stages get the MCP toolset
+.venv/bin/lag pipeline "..." --agents "architect_agent,dev_agent" --no-plan
 
 .venv/bin/python servers/tools_server.py           # standalone; shows real tracebacks
 .venv/bin/python servers/rag_server.py --ingest docs/   # populate .chroma
-.venv/bin/python -m pytest                         # 105 passing
+.venv/bin/python -m pytest                         # 231 passing
 
 ollama pull nomic-embed-text                       # required before Phase 6
 ```
@@ -179,15 +202,79 @@ ASUS was several times slower — ~1–3 min per round trip.)
 
 `config.py` searches `config.yaml` then falls back to `config.example.yaml`, so the kit runs
 before customization. Models are per-machine (`models.orchestrator|worker|coder|fast|embed`):
-the MacBook Air M4 handles `qwen3:14b` as orchestrator; the CPU-only ASUS should stay small.
-**Avoid R1 distills as orchestrators** — weak structured output, and thinking tokens destroy
-loop latency.
+the MacBook Air M4 runs `ornith:latest` as orchestrator with everything downstream on
+`qwen3:8b`; the CPU-only ASUS should stay small. `ollama.num_ctx_by_model` overrides the
+window per tag, falling back to `ollama.num_ctx`. **Avoid R1 distills as orchestrators** —
+weak structured output, and thinking tokens destroy loop latency.
 
-## Swarm modes (`swarm.py`)
+## Live streaming and per-agent tasks
 
-- `pipeline` — each agent's output feeds the next.
-- `parallel` — all agents run the task concurrently via `ThreadPoolExecutor`; outputs concatenated.
-- `crew` — first agent coordinates: decompose → delegate to specialists → synthesize.
+`OllamaClient.run` and `Pipeline.run` take an optional `on_event` callback. It is a **side
+channel**: the return value is identical with or without it, so the CLI is untouched and the
+blocking `/api/run` and the streaming `/api/stream` cannot disagree about the same run. Event
+types: `start`, `stage` (with `model` and a `loaded` flag), `thinking`, `token`, `tool`,
+`tool_result`, `done`, `error`.
+
+Streaming is opt-in rather than the default because reconstructing `tool_calls` from chunks
+is strictly more fragile than reading them off a finished message — `_turn` streams only when
+someone is listening. Thinking deltas are a separate event type on purpose: on ornith they are
+most of the wait, and a console showing nothing during them looks hung.
+
+`/api/stream` is a POST returning `text/event-stream` (not an EventSource GET, so the prompt
+travels in the body rather than the URL). The synchronous loop runs on a daemon thread and
+pushes events into a queue the response generator drains.
+
+**Handing one agent a task is not a special case** — it is a one-stage pipeline with
+`plan=False`. Clicking a unit in the console roster opens an inline input and posts exactly
+that, so there is no separate endpoint or code path to keep in sync.
+
+## Agent mode (`agent.py`)
+
+The pipeline is the *bounded* shape: fixed stages, one pass, done. Agent mode is the
+unbounded one — a goal, the full toolset, and a loop that runs until the goal is met or
+you stop it. `lag agent start` walks a wizard for the goal (or takes `--goal`),
+`lag agent status` reads the run, `lag agent stop` ends it.
+
+Three properties make it safe to leave running, and none are visible from one good run:
+
+- **It can stop.** `mark_done` is the termination condition — without it an autonomous
+  loop burns tokens until a step cap and calls that success. `--max-cycles` and the stop
+  file (`agent/<name>.stop`) are the backstops. The idle wait polls that file every second
+  rather than sleeping the whole interval: an agent you cannot stop promptly is not one
+  you leave on.
+- **It survives its own failures.** Every cycle is wrapped; an exception becomes an
+  observation the *next* cycle reads, then the loop backs off and continues. Same rule as
+  the tool layer — errors come back as text the model can work with, never raised.
+- **It remembers.** State is written to `agent/<name>.json` after every cycle, so status
+  and a restart see the same record. A run resumes if the goal matches; a different goal
+  starts fresh.
+
+Cycles share no conversation memory — each is a fresh turn — so the goal, the progress
+log and the last observation *are* the continuity. That is why `GoalSpec.prompt` restates
+everything every cycle, and why `note_progress` matters: it is how a cycle talks to its
+successor.
+
+**Autonomy is unrestricted, by explicit decision.** Agent mode gets the same unsandboxed
+shell and filesystem the supervised CLI has. See the `run_shell` loose end above.
+
+## Project pipeline (`pipeline.py`)
+
+One sequential shape, replacing the old three-mode `Swarm` (removed 2026-09-07). Stages
+run in the order given, each seeing the full context accumulated above it; the lead
+plans once at the top and its per-stage instructions ride that context down the line.
+`Pipeline.loads()` reports the cold-load cost of an ordering, and `run` prints each
+stage as LOAD or resident.
+
+Why the other two modes went, and why not to reintroduce them:
+
+- **`parallel` was actively harmful here.** It fired every agent at once through a
+  `ThreadPoolExecutor`, but only one chat model is resident, so concurrent agents on
+  different tags evict each other in a loop — slower than running them in sequence. It
+  is only safe when every agent shares one tag, which is a pipeline with extra steps.
+- **`crew` forced an avoidable reload.** Its coordinator bookended the run (plan →
+  delegate → come back to synthesize), and that return trip cost a second cold load.
+  The pipeline gets the same result by having the lead front-load its instructions and
+  letting the final stage answer on whatever model is already resident.
 
 ## Phase 6 — RAG (`servers/rag_server.py`)
 
@@ -247,30 +334,69 @@ retrieval-only `embed`.
 
 ## Context window
 
-Ollama ignores a model's trained context and allocates **4096** by default. The Mac's
-`qwen3:8b`/`qwen3:14b` are trained for far more (256K), so leaving `num_ctx` unset runs them
-at a fraction of their window and silently drops the oldest tokens. Always construct clients
-via `OllamaClient.from_config` so `ollama.num_ctx` and `keep_alive` are applied; constructing
-`OllamaClient(...)` directly silently reverts to 4096 and the model starts dropping the top of
-its own conversation with no error. num_ctx is a memory dial, not a speed dial (measured: gen
-speed and load time stay flat as it grows; only the footprint does). On the 16 GB M4 with a
-resident `qwen3:14b`, **`num_ctx: 8192`** is the safe setting (~10.3 GB, ~5 GB free); 32768 would
-put the 14b at ~15 GB and brush disk swap. See STATUS.md "Single resident model on 16 GB".
+Ollama ignores a model's trained context and allocates **4096** by default. The Mac's models
+are trained for far more (`ornith` 262144, `qwen3:8b` 40960), so leaving `num_ctx` unset runs
+them at a fraction of their window and silently drops the oldest tokens. Always construct
+clients via `OllamaClient.from_config` so the window and `keep_alive` are applied;
+constructing `OllamaClient(...)` directly silently reverts to 4096 and the model starts
+dropping the top of its own conversation with no error.
+
+num_ctx is a memory dial, not a speed dial (measured: gen speed ~19 tok/s and load time stay
+flat as it grows; only the footprint does). *Filling* a window is the part that costs — prefill
+tracks tokens actually used.
+
+Because only one chat model is resident at a time, each is sized on its own terms via
+`ollama.num_ctx_by_model` rather than being pinned to the smallest one's ceiling. Measured on
+the 16 GB M4 (weights + KV):
+
+| num_ctx | `ornith:latest` | `qwen3:8b` |
+|---------|-----------------|------------|
+| 8192 | 5.48 GB | 6.18 GB |
+| 16384 | 6.35 GB | 7.41 GB |
+| 32768 | 6.40 GB | 9.91 GB |
+| 40960 | — | 11.16 GB (its trained max) |
+| 131072 | 10.12 GB | — |
+
+So `ornith` holds 16× the window for less memory than `qwen3:8b` spends on 32768.
+
+**The window is not a speed dial in either direction.** Measured across ornith at
+8192 / 32768 / 131072: load 8.40s / 5.38s / 6.39s, generation 13.6 / 15.4 / 15.3 tok/s.
+Flat. Dialling num_ctx *down* does not buy throughput — it buys memory back, nothing more.
+
+`ornith` therefore sits at **32768** (~6.4 GB) and `qwen3:8b` at **8192**. 131072 was tried
+and dropped: it cost 10.12 GB for headroom the pipeline cannot use anyway, because
+`Pipeline._brief` is deliberately bounded to fit the 8192 stage that reads it. A plan written
+in a wide window and read by a narrow stage is truncated **silently**, not rejected — that
+bound is the mitigation, and it also caps the value of a wide lead window.
+
+If a run feels slow, num_ctx is the wrong knob. `ornith` has **thinking** enabled natively
+and it dominates: a streamed one-stage run producing `1 2 3` emitted **140 thinking tokens
+against 5 answer tokens**, and a two-stage run 502 against 187. See STATUS.md "One model at
+a time".
 
 ## Known loose ends
 
 These are deliberate, documented in `files/MORNING_BRIEF.md` §4 — not bugs to chase blindly:
 
-- **`web_search` is implemented** (DuckDuckGo HTML endpoint, keyless, stdlib-only). It is the
-  one tool that leaves the machine — the query goes off-box. It scrapes markup, so it will
-  break if DuckDuckGo changes their HTML; the parser is pinned by tests against a captured
-  page, never the live network. Don't add an API-key search provider without asking; keyless
-  is what keeps the privacy stance intact.
+- **Two tools now leave the machine**, not one. `web_search` (DuckDuckGo HTML endpoint,
+  keyless, stdlib-only) and, as of agent mode, **`http_fetch`** — a GET of a URL the model
+  chose, stripped to text. This is a deliberate widening of the original stance, decided
+  when agent mode was added: search returned only snippets, so an agent could find a page
+  and never read it. Both stay keyless and stdlib-only, so no dependency and no account.
+  `web_search` scrapes markup and will break if DuckDuckGo changes their HTML; the parser is
+  pinned by tests against a captured page, never the live network. Don't add an API-key
+  search provider without asking; keyless is what keeps the rest of the stance intact.
 - **`run_shell` is unsandboxed** — `shell=True`, no path allow-list, 60s timeout. Accepted
   risk on a single-user offline box. Revisit before anything multi-user. Don't silently
-  "fix" this without asking; it's a deferred decision, not an oversight.
-- **`thinking_mode` in personas is metadata only** — parsed but never passed to
-  `ollama.chat(think=...)`. Wiring it is ~2 lines in `ollama_client.py`.
+  "fix" this without asking; it's a deferred decision, not an oversight. **Agent mode
+  inherits this unchanged, by explicit decision** — an unattended loop runs the same
+  unsandboxed shell a supervised `lag run` does. The brakes are the cycle cap and the stop
+  file, not a sandbox. If that ever needs to change, it is a real design task (workspace
+  confinement + a deny-list), not a patch.
+- ~~`thinking_mode` in personas is metadata only~~ — **wired.** It reaches
+  `ollama.chat(think=...)` through `Agent`/`from_config`, with a one-shot retry without
+  `think` for tags that reject the parameter. This mattered more than it looked: unwired,
+  `dev_agent` (`thinking_mode: false`) emitted 140 thinking tokens to answer "1 2 3".
 - **`mcp` SDK version churn — this landed.** The installed SDK is **mcp 2.0.0**, which renamed
   two things the kit depended on:
 

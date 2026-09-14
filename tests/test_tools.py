@@ -14,10 +14,16 @@ from lag import tools
 from lag.tools import TOOLS, LocalToolProvider
 
 
-def test_all_eight_tools_registered():
+def test_the_whole_toolset_is_registered():
+    """TOOLS is the single registry — the MCP server iterates it, so a tool missing
+    here is a tool the agent silently does not have over either transport."""
     assert set(TOOLS) == {
+        # original eight
         "read_file", "write_file", "list_dir", "run_shell",
         "system_info", "remember", "recall", "web_search",
+        # agent mode: termination condition, clock, search, and reading a page
+        "goal_status", "note_progress", "mark_done",
+        "now", "sleep_for", "find_files", "grep_files", "http_fetch",
     }
 
 
@@ -175,7 +181,7 @@ class TestLocalToolProvider:
         # Ollama derives JSON schemas from the function objects themselves,
         # so schemas() must hand back callables, not dicts.
         schemas = LocalToolProvider().schemas()
-        assert len(schemas) == 8
+        assert len(schemas) == len(TOOLS)
         assert all(callable(s) for s in schemas)
 
     def test_call_dispatches(self):
@@ -198,3 +204,93 @@ class TestLocalToolProvider:
 
     def test_call_with_none_args(self):
         assert json.loads(LocalToolProvider().call("system_info", None))
+
+
+class TestAgentModeTools:
+    """The eight tools added for agent mode.
+
+    The goal tools are the loop's termination condition and the search tools exist
+    partly so a small model does not reach for run_shell to do routine lookups, so
+    both need to behave predictably on bad input rather than raise.
+    """
+
+    def test_find_files_matches_a_glob(self, tmp_path):
+        (tmp_path / "a.py").write_text("x")
+        (tmp_path / "b.txt").write_text("x")
+        out = tools.find_files("*.py", str(tmp_path))
+        assert "a.py" in out and "b.txt" not in out
+
+    def test_find_files_reports_a_bad_directory_instead_of_raising(self):
+        assert "not a directory" in tools.find_files("*", "/no/such/dir")
+
+    def test_find_files_says_so_when_nothing_matches(self, tmp_path):
+        assert "no files match" in tools.find_files("*.rs", str(tmp_path))
+
+    def test_grep_files_returns_path_line_match(self, tmp_path):
+        (tmp_path / "x.py").write_text("alpha\nbeta target here\ngamma\n")
+        out = tools.grep_files("target", str(tmp_path))
+        assert "x.py:2:" in out and "target" in out
+
+    def test_grep_files_reports_a_bad_regex_instead_of_raising(self, tmp_path):
+        assert "bad pattern" in tools.grep_files("(unclosed", str(tmp_path))
+
+    def test_grep_files_says_so_when_nothing_matches(self, tmp_path):
+        (tmp_path / "x.py").write_text("nothing here\n")
+        assert "no matches" in tools.grep_files("zzz", str(tmp_path))
+
+    def test_http_fetch_rejects_a_non_http_url_without_touching_the_network(self):
+        # file:// would otherwise be a local-file read through an "outbound" tool
+        assert "must start with http" in tools.http_fetch("file:///etc/passwd")
+        assert "must start with http" in tools.http_fetch("")
+
+    def test_sleep_for_is_capped(self, monkeypatch):
+        """Capped at 300 so a stop request is never far from being noticed.
+
+        time.sleep is stubbed: the point is the clamp, and a test that genuinely
+        slept for the cap would take five minutes to prove it.
+        """
+        slept = []
+        monkeypatch.setattr("time.sleep", slept.append)
+        assert tools.sleep_for(99999) == "slept 300s"
+        assert slept == [300]
+
+    def test_sleep_for_clamps_negatives(self, monkeypatch):
+        slept = []
+        monkeypatch.setattr("time.sleep", slept.append)
+        assert tools.sleep_for(-5) == "slept 0s"
+        assert slept == [0]
+
+    def test_mark_done_sets_the_termination_flag(self):
+        tools.GOAL.update({"done": False, "summary": ""})
+        tools.mark_done("  finished  ")
+        assert tools.GOAL["done"] is True
+        assert tools.GOAL["summary"] == "finished"
+
+    def test_note_progress_ignores_an_empty_note(self):
+        tools.GOAL["notes"] = []
+        tools.note_progress("   ")
+        assert tools.GOAL["notes"] == []
+        tools.note_progress("real note")
+        assert tools.GOAL["notes"] == ["real note"]
+
+    def test_now_reports_elapsed_once_a_goal_is_running(self):
+        tools.GOAL.update({"goal": "g", "started": "2020-01-01T00:00:00+00:00"})
+        assert "goal running" in tools.now()
+
+    def test_find_files_falls_back_to_a_recursive_search(self, tmp_path):
+        """A bare glob only matches direct children, and small models write "*.py"
+        when they mean "everything under here" — so src/ with files in src/lag/ came
+        back empty and the model concluded there were none."""
+        (tmp_path / "pkg").mkdir()
+        (tmp_path / "pkg" / "deep.py").write_text("x")
+        out = tools.find_files("*.py", str(tmp_path))
+        assert "deep.py" in out
+        assert "searched recursively" in out      # and it says so, rather than lying
+
+    def test_find_files_prefers_a_direct_match_over_the_fallback(self, tmp_path):
+        (tmp_path / "top.py").write_text("x")
+        (tmp_path / "pkg").mkdir()
+        (tmp_path / "pkg" / "deep.py").write_text("x")
+        out = tools.find_files("*.py", str(tmp_path))
+        assert "top.py" in out and "deep.py" not in out
+        assert "recursively" not in out

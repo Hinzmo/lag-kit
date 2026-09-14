@@ -1,9 +1,9 @@
 """Persona tests.
 
 The nine persona YAMLs were the one piece feared lost in the wipe, so these
-tests pin the contract `config.load_persona` and `swarm.Agent` rely on. A
+tests pin the contract `config.load_persona` and `pipeline.Agent` rely on. A
 persona that loads but lacks `model` or `system_prompt` fails much later, deep
-inside a swarm run, where the traceback is far less obvious.
+inside a pipeline run, where the traceback is far less obvious.
 """
 from __future__ import annotations
 from pathlib import Path
@@ -30,7 +30,7 @@ def test_named_crew_present():
 @pytest.mark.parametrize("path", PERSONA_FILES, ids=lambda p: p.stem)
 class TestEachPersona:
     def test_has_required_keys(self, path):
-        # swarm.Agent.__init__ reads name/model/system_prompt directly.
+        # pipeline.Agent.__init__ reads name/model/system_prompt directly.
         data = yaml.safe_load(path.read_text(encoding="utf-8"))
         assert {"name", "model", "system_prompt"} <= set(data)
 

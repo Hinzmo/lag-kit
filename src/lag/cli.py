@@ -30,28 +30,42 @@ def run(
 
 
 @app.command()
-def swarm(
+def pipeline(
     task: str,
-    mode: str = typer.Option(None, help="pipeline | parallel | crew"),
-    agents: str = typer.Option("architect_agent,dev_agent,senior_dev_agent", help="Comma-separated persona names (first is coordinator in crew mode)."),
-    mcp: bool = typer.Option(False, "--mcp", help="Give every agent the MCP toolset (fs, shell, web, memory, and search_knowledge_base) instead of only in-process tools."),
+    agents: str = typer.Option(None, help="Comma-separated persona names, in order (the first plans unless --no-plan)."),
+    plan: bool = typer.Option(True, help="Let the first stage write the downstream instructions before any work starts."),
+    route: bool = typer.Option(True, help="Let the orchestrator pick which agents the task needs, instead of running --agents in order."),
+    mcp: bool = typer.Option(False, "--mcp", help="Give every stage the MCP toolset (fs, shell, web, memory, and search_knowledge_base) instead of only in-process tools."),
 ):
-    """Run a multi-agent swarm on a task."""
-    from .swarm import Swarm
-    cfg = load_config()
-    mode = mode or cfg["swarm"]["default_mode"]
-    names = [a.strip() for a in agents.split(",")]
+    """Run a project pipeline: staged agents, each building on the context above it.
 
-    # With --mcp, all agents share ONE provider backed by both MCP servers, so the
-    # orchestrator gains search_knowledge_base and can pull back facts it stored with
-    # remember — the memory-offload loop that makes a small num_ctx workable. Without
-    # it, from_personas falls back to in-process tools (no semantic KB search).
+    Stages run in the order given — order is meaning, and it is also the cost model,
+    since consecutive stages sharing a model tag reuse the resident weights while a
+    change of tag costs a full cold reload (~5s on this box).
+    """
+    from .pipeline import Pipeline
+    cfg = load_config()
+
+    # With --mcp, all stages share ONE provider backed by both MCP servers, so the lead
+    # gains search_knowledge_base and can pull back facts it stored with remember — the
+    # memory-offload loop that makes a small num_ctx workable. Without it, from_personas
+    # falls back to in-process tools (no semantic KB search).
     provider = None
     if mcp:
         from .mcp_client import MCPToolProvider
         provider = MCPToolProvider.from_config(cfg)
 
-    print(Swarm.from_personas(names, cfg, provider).run(task, mode=mode))
+    if route and not agents:
+        typer.echo("[pipeline] routing — the orchestrator is choosing the team …")
+        pipe = Pipeline.routed(task, cfg, provider)
+        typer.echo(f"[pipeline] chose: {', '.join(a.name for a in pipe.stages) or '(none)'}")
+    else:
+        agents = agents or cfg.get("pipeline", {}).get(
+            "default_agents", "architect_agent,dev_agent,senior_dev_agent"
+        )
+        pipe = Pipeline.from_personas([a.strip() for a in agents.split(",")], cfg, provider)
+    typer.echo(f"[pipeline] {len(pipe.stages)} stage(s) · {pipe.loads()} model load(s)")
+    print(pipe.run(task, plan=plan))
 
 
 @app.command()
@@ -71,6 +85,133 @@ def serve(
 
     typer.echo(f"lag console → http://{host}:{port}   (Ctrl-C to stop)")
     uvicorn.run(web_app, host=host, port=port, log_level="info")
+
+
+agent_app = typer.Typer(help="Agent mode: one persona pursuing a goal on its own, 24/7 if you like.")
+app.add_typer(agent_app, name="agent")
+
+
+def _ask(label: str, default: str = "") -> str:
+    """One wizard field. Enter keeps the default; the goal is the only required one."""
+    suffix = f" [{default}]" if default else ""
+    try:
+        val = input(f"  {label}{suffix}: ").strip()
+    except (EOFError, KeyboardInterrupt):
+        raise typer.Abort() from None
+    return val or default
+
+
+@agent_app.command("start")
+def agent_start(
+    goal: str = typer.Option(None, help="What the agent should achieve. Omit for the wizard."),
+    success: str = typer.Option("", help="What done looks like."),
+    constraints: str = typer.Option("", help="What it must not do."),
+    persona: str = typer.Option("dev_agent", help="Which persona drives the loop."),
+    interval: int = typer.Option(0, help="Seconds to pause between cycles (0 = flat out)."),
+    max_cycles: int = typer.Option(0, help="Stop after this many cycles (0 = until done)."),
+    name: str = typer.Option("default", help="Run name; also the state and stop file name."),
+    max_failures: int = typer.Option(5, help="Stop after this many CONSECUTIVE failed cycles (0 = never)."),
+    max_idle: int = typer.Option(5, help="Stop after this many consecutive cycles that call no tool and note no progress (0 = never)."),
+    mcp: bool = typer.Option(False, "--mcp", help="Use the MCP toolset instead of in-process tools."),
+):
+    """Set a goal and let the agent work it until done, capped, or stopped.
+
+    With no --goal this walks the wizard. Agent mode runs with FULL autonomy — the
+    same unsandboxed shell and filesystem the rest of the CLI has — so read the goal
+    back before confirming, and remember `lag agent stop` exists.
+    """
+    from .agent import AgentLoop, GoalSpec, stop_path
+
+    cfg = load_config()
+
+    if not goal:
+        typer.echo("\n  agent mode — set the goal\n")
+        goal = _ask("goal (required)")
+        if not goal:
+            typer.echo("  no goal given; nothing to do.")
+            raise typer.Exit(1)
+        success = _ask("done when", success)
+        constraints = _ask("must not", constraints)
+        persona = _ask("persona", persona)
+        interval = int(_ask("seconds between cycles", str(interval)) or 0)
+        max_cycles = int(_ask("max cycles (0 = until done)", str(max_cycles)) or 0)
+        name = _ask("run name", name)
+
+    spec = GoalSpec(goal=goal, success=success, constraints=constraints,
+                    persona=persona, interval=interval,
+                    max_cycles=max_cycles or None, name=name,
+                    max_failures=max_failures, max_idle=max_idle)
+
+    typer.echo(f"\n  goal      : {spec.goal}")
+    typer.echo(f"  done when : {spec.success or '(agent decides)'}")
+    typer.echo(f"  must not  : {spec.constraints or '(none)'}")
+    typer.echo(f"  persona   : {spec.persona}")
+    typer.echo(f"  cadence   : {'flat out' if not spec.interval else str(spec.interval) + 's between cycles'}")
+    typer.echo(f"  cap       : {spec.max_cycles or 'until done or stopped'}")
+    typer.echo(f"  breakers  : {spec.max_failures or 'off'} consecutive failures · "
+               f"{spec.max_idle or 'off'} idle cycles")
+    typer.echo(f"  autonomy  : FULL — unsandboxed shell and filesystem")
+    typer.echo(f"  stop with : lag agent stop {spec.name}   (or touch {stop_path(spec.name)})\n")
+
+    provider = None
+    if mcp:
+        from .mcp_client import MCPToolProvider
+        provider = MCPToolProvider.from_config(cfg)
+
+    def show(ev):
+        t = ev.get("type")
+        if t == "cycle":
+            typer.echo(f"\n[agent] cycle {ev['n']} · {ev['model']}")
+        elif t == "tool":
+            typer.echo(f"  ↳ {ev['name']}({str(ev.get('args'))[:80]})")
+        elif t == "cycle_error":
+            typer.echo(f"  ! cycle {ev['n']} failed: {ev['message']}")
+        elif t == "idle":
+            typer.echo(f"[agent] idle {ev['seconds']}s")
+        elif t == "agent_done":
+            typer.echo(f"\n[agent] DONE after {ev['cycle']} cycle(s): {ev['summary']}")
+        elif t == "agent_stop":
+            typer.echo(f"\n[agent] stopped ({ev['reason']}) at cycle {ev['cycle']}"
+                       + (f" — {ev['detail']}" if ev.get("detail") else ""))
+
+    state = AgentLoop(spec, cfg, provider).run(on_event=show)
+    typer.echo(f"\n[agent] {state.cycle} cycle(s) · {len(state.notes)} note(s) · "
+               f"{state.errors} error(s) · state: {state.path}")
+
+
+@agent_app.command("status")
+def agent_status(name: str = typer.Argument("default", help="Run name.")):
+    """Show what an agent is working on and how far it has got."""
+    from .agent import AgentState
+
+    st = AgentState.load(name)
+    if not st:
+        typer.echo(f"no agent state for {name!r} — start one with: lag agent start")
+        raise typer.Exit(1)
+    typer.echo(f"  goal    : {st.spec.get('goal','')}")
+    typer.echo(f"  status  : {'DONE' if st.done else 'in progress'}")
+    typer.echo(f"  cycles  : {st.cycle}   errors: {st.errors}")
+    typer.echo(f"  started : {st.started}    updated: {st.updated}")
+    if st.summary:
+        typer.echo(f"  summary : {st.summary}")
+    if st.stopped_reason:
+        typer.echo(f"  stopped : {st.stopped_reason}")
+    if st.notes:
+        typer.echo("  progress:")
+        for n in st.notes[-15:]:
+            typer.echo(f"    - {n}")
+
+
+@agent_app.command("stop")
+def agent_stop(name: str = typer.Argument("default", help="Run name.")):
+    """Ask a running agent to stop after its current cycle."""
+    from .agent import stop_path
+
+    p = stop_path(name)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text("stop")
+    typer.echo(f"stop requested for {name!r} — it will exit within a second of its "
+               f"current cycle finishing ({p})")
 
 
 study_app = typer.Typer(help="Course brain: study your own material, then get drilled on it.")

@@ -25,7 +25,7 @@ def test_index_serves_the_console():
 def test_state_reports_the_real_system(monkeypatch):
     monkeypatch.setattr(
         web, "_ollama_status",
-        lambda cfg: (True, ["qwen3:14b"], [{"name": "qwen3:14b", "size_gb": 10.31}]),
+        lambda cfg: (True, ["ornith:latest"], [{"name": "ornith:latest", "size_gb": 5.48}]),
     )
     monkeypatch.setattr(web, "_chroma_count", lambda cfg: {"available": True, "chunks": 9})
 
@@ -33,7 +33,7 @@ def test_state_reports_the_real_system(monkeypatch):
     assert d["chat_model"]                       # resolved from config
     assert "read_file" in d["tools"]
     assert "search_knowledge_base" in d["rag_tools"]
-    assert d["ollama"]["available"] == ["qwen3:14b"]
+    assert d["ollama"]["available"] == ["ornith:latest"]
     assert d["chroma"]["chunks"] == 9
     assert d["personas"], "real personas should load from personas/"
     assert all({"name", "role", "model"} <= set(p) for p in d["personas"])
@@ -48,3 +48,23 @@ def test_run_surfaces_errors_as_a_message(monkeypatch):
     r = client.post("/api/run", json={"prompt": "hi", "mode": "solo", "mcp": False})
     assert r.status_code == 200
     assert "nope" in r.json().get("error", "")
+
+
+def test_state_reports_the_window_the_chat_model_actually_gets(monkeypatch):
+    """With num_ctx_by_model the global default is not what the orchestrator runs at."""
+    from lag import web
+
+    cfg = {
+        "ollama_base_url": "http://x",
+        "models": {"orchestrator": "wide:9b", "worker": "narrow:8b"},
+        "ollama": {"num_ctx": 8192, "num_ctx_by_model": {"wide:9b": 131072}},
+        "paths": {"personas": "./personas"},
+    }
+    monkeypatch.setattr(web, "load_config", lambda: cfg)
+    monkeypatch.setattr(web, "_ollama_status", lambda c: (True, [], []))
+    monkeypatch.setattr(web, "_personas", lambda c: [])
+    monkeypatch.setattr(web, "_chroma_count", lambda c: 0)
+
+    d = web.state()
+    assert d["chat_model"] == "wide:9b"
+    assert d["num_ctx"] == 131072

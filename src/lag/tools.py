@@ -22,10 +22,11 @@ from pathlib import Path
 
 _MEMORY = Path("memory/store.json")
 
-# web_search is the one tool that leaves the machine — the query goes to
-# DuckDuckGo. Everything else here is local. Kept keyless and stdlib-only so it
-# adds no dependency and no account: the privacy cost is exactly one outbound
-# query, and nothing else about the kit's posture changes.
+# Two tools leave the machine: web_search (a query to DuckDuckGo) and http_fetch
+# (a GET of a URL the model chose). Both are keyless and stdlib-only, so they add
+# no dependency and no account, but http_fetch is a deliberate widening of the
+# original posture — search returned only snippets, so an agent could find a page
+# and never read it. Everything else here is local. See CLAUDE.md "Privacy".
 _DDG = "https://html.duckduckgo.com/html/"
 _UA = "Mozilla/5.0 (X11; Linux x86_64) lag/0.2 (+local-agent-kit)"
 _SEARCH_TIMEOUT = 15
@@ -241,10 +242,190 @@ def web_search(query: str, max_results: int = 5) -> str:
     return "\n".join(out).strip()
 
 
+
+
+# ── goal state ────────────────────────────────────────────────────────────────
+# Agent mode needs a termination condition. Without one an autonomous loop has no
+# way to say "done" and simply burns tokens until a step cap. These tools read and
+# write one process-local goal record that agent.py owns and populates; outside
+# agent mode they degrade to a clear string rather than failing.
+GOAL: dict = {"goal": "", "started": "", "cycle": 0, "notes": [],
+              "done": False, "summary": ""}
+
+
+def goal_status() -> str:
+    """Restate the current goal and how much work has gone into it so far.
+
+    Use this when you have lost track of what you are working towards.
+    """
+    if not GOAL["goal"]:
+        return "no goal set (not running in agent mode)"
+    notes = GOAL["notes"][-8:]
+    body = "\n".join(f"  - {n}" for n in notes) or "  (no progress noted yet)"
+    return (f"goal: {GOAL['goal']}\nstarted: {GOAL['started']}\n"
+            f"cycle: {GOAL['cycle']}\nprogress:\n{body}")
+
+
+def note_progress(note: str) -> str:
+    """Record a durable one-line note about what you just accomplished.
+
+    Args:
+        note: What changed, in one line. Written to the goal's progress log.
+    """
+    note = note.strip()
+    if not note:
+        return "nothing recorded (empty note)"
+    GOAL["notes"].append(note)
+    return f"noted ({len(GOAL['notes'])} total)"
+
+
+def mark_done(summary: str) -> str:
+    """Declare the goal complete and end the run. Use ONLY when it is truly met.
+
+    Args:
+        summary: What was achieved, and anything the human should check.
+    """
+    GOAL["done"] = True
+    GOAL["summary"] = summary.strip()
+    return "goal marked complete; the run will stop after this step"
+
+
+# ── time ──────────────────────────────────────────────────────────────────────
+def now() -> str:
+    """Return the current local date and time, plus how long this goal has run."""
+    import datetime
+    t = datetime.datetime.now().astimezone()
+    out = t.strftime("%Y-%m-%d %H:%M:%S %Z")
+    if GOAL["started"]:
+        try:
+            began = datetime.datetime.fromisoformat(GOAL["started"])
+            mins = (t - began).total_seconds() / 60
+            out += f" (goal running {mins:.0f} min)"
+        except ValueError:
+            pass
+    return out
+
+
+def sleep_for(seconds: int) -> str:
+    """Pause before continuing. Use to pace long-running work, not to stall.
+
+    Args:
+        seconds: How long to wait. Capped at 300 so a stop request is never
+            more than five minutes from being noticed.
+    """
+    import time
+    n = max(0, min(int(seconds), 300))
+    time.sleep(n)
+    return f"slept {n}s"
+
+
+# ── code search ───────────────────────────────────────────────────────────────
+# These exist partly so the model does not reach for run_shell to do routine
+# lookups: a real tool with a capped, structured result is easier for a small
+# model to use correctly than composing find/grep pipelines.
+def find_files(pattern: str = "**/*", path: str = ".", limit: int = 100) -> str:
+    """List files matching a glob pattern.
+
+    Args:
+        pattern: Glob such as "**/*.py" or "src/**/*.yaml".
+        path: Directory to search from.
+        limit: Maximum paths to return.
+    """
+    try:
+        base = Path(path)
+        if not base.is_dir():
+            return f"not a directory: {path}"
+
+        def hits(pat: str) -> list[str]:
+            return [str(f) for f in sorted(base.glob(pat)) if f.is_file()][:max(1, limit)]
+
+        found = hits(pattern)
+        if found:
+            return "\n".join(found)
+
+        # Small models reliably write "*.py" when they mean "everything under here",
+        # and a bare glob only matches direct children — so `src/` with files in
+        # `src/lag/` comes back empty and the model concludes there are none. Retry
+        # recursively and say that is what happened, rather than reporting nothing.
+        if not pattern.startswith("**"):
+            deep = hits(f"**/{pattern.lstrip('/')}")
+            if deep:
+                return (f"(no direct match for {pattern!r}; searched recursively)\n"
+                        + "\n".join(deep))
+        return f"no files match {pattern!r} under {path}"
+    except Exception as e:  # noqa: BLE001 - tools report, never raise
+        return f"find_files error: {type(e).__name__}: {e}"
+
+
+def grep_files(pattern: str, path: str = ".", glob: str = "**/*", limit: int = 80) -> str:
+    """Search file contents for a regular expression, returning path:line:match.
+
+    Args:
+        pattern: Regular expression to search for.
+        path: Directory to search from.
+        glob: Which files to search, as a glob.
+        limit: Maximum matching lines to return.
+    """
+    try:
+        rx = re.compile(pattern)
+    except re.error as e:
+        return f"bad pattern: {e}"
+    out: list[str] = []
+    try:
+        for f in sorted(Path(path).glob(glob)):
+            if not f.is_file() or f.stat().st_size > 2_000_000:
+                continue
+            try:
+                for i, line in enumerate(f.read_text(errors="ignore").splitlines(), 1):
+                    if rx.search(line):
+                        out.append(f"{f}:{i}:{line.strip()[:200]}")
+                        if len(out) >= max(1, limit):
+                            return "\n".join(out) + "\n(truncated)"
+            except OSError:
+                continue
+    except Exception as e:  # noqa: BLE001
+        return f"grep_files error: {type(e).__name__}: {e}"
+    return "\n".join(out) if out else f"no matches for {pattern!r}"
+
+
+# ── outbound ──────────────────────────────────────────────────────────────────
+def http_fetch(url: str, max_chars: int = 4000) -> str:
+    """Fetch a URL and return its readable text. This leaves the machine.
+
+    Args:
+        url: The http(s) URL to fetch.
+        max_chars: Truncate the extracted text to this many characters.
+    """
+    if not re.match(r"^https?://", url or ""):
+        return "http_fetch error: url must start with http:// or https://"
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": _UA})
+        with urllib.request.urlopen(req, timeout=_SEARCH_TIMEOUT) as r:
+            ctype = r.headers.get("Content-Type", "")
+            raw = r.read(2_000_000).decode(r.headers.get_content_charset() or "utf-8",
+                                           errors="replace")
+    except urllib.error.HTTPError as e:
+        return f"http_fetch error: HTTP {e.code} for {url}"
+    except Exception as e:  # noqa: BLE001
+        return f"http_fetch error: {type(e).__name__}: {e}"
+
+    if "html" in ctype.lower() or raw.lstrip()[:1] == "<":
+        raw = re.sub(r"(?is)<(script|style|noscript)[^>]*>.*?</\1>", " ", raw)
+        raw = re.sub(r"(?s)<[^>]+>", " ", raw)
+        raw = unescape(raw)
+    text = re.sub(r"[ \t]+", " ", raw)
+    text = re.sub(r"\n\s*\n+", "\n\n", text).strip()
+    return text[:max(200, max_chars)] or "(no readable text)"
+
+
 TOOLS = {
     fn.__name__: fn
     for fn in (read_file, write_file, list_dir, run_shell, system_info,
-               remember, recall, web_search)
+               remember, recall, web_search,
+               # agent mode: a termination condition, a clock, and search that
+               # does not require composing shell pipelines
+               goal_status, note_progress, mark_done, now, sleep_for,
+               find_files, grep_files, http_fetch)
 }
 
 

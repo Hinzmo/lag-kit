@@ -13,40 +13,75 @@ ollama_base_url: "http://localhost:11434"
 #   fast          unassigned — free for short/cheap calls
 #   embed         retrieval only, never a chat model
 #
-# Use `ollama list` to get exact tags; a role pointing at a model you have not
+# Pick models that support TOOLS. The agent loop is a tool-calling loop, so a
+# completion-only model fails at run time no matter how good it is — check with
+# `ollama show <tag>` and look for `tools` under Capabilities.
+#
+# A role switch is not free. Ollama may hold only one chat model resident (it does
+# on a 16 GB Mac — see the note under num_ctx_by_model), and each switch is a full
+# cold reload of several seconds. Pointing several roles at the SAME tag is a real
+# optimization, not a cop-out: consecutive pipeline stages then reuse the resident
+# weights. Use `ollama list` for exact tags; a role pointing at a model you have not
 # pulled fails at run time, and a mistyped role name fails immediately at load.
 models:
-  orchestrator: "qwen3:8b"      # Mac M4: a 14B sits here comfortably · CPU box: keep at 8B
-  worker: "qwen3:4b"
-  coder: "qwen2.5-coder:7b"
-  fast: "llama3.2:3b"
+  orchestrator: "qwen3:8b"      # the one stage that plans; give it your strongest model
+  worker: "qwen3:8b"            # sharing one tag downstream avoids a reload per stage
+  coder: "qwen3:8b"
+  fast: "qwen3:8b"
   embed: "nomic-embed-text"     # Phase 6 RAG embeddings
 
-swarm:
-  default_mode: "crew"          # pipeline | parallel | crew
+pipeline:
+  # Stages run in this order. Order is meaning — design, then build, then review —
+  # and it is also the cost model, since a change of model tag between consecutive
+  # stages costs a reload. `lag pipeline` prints each stage as LOAD or resident.
+  default_agents: "architect_agent,dev_agent,senior_dev_agent"
 
 paths:
   personas: "./personas"
   memory: "./memory"
 
 ollama:
-  keep_alive: "30m"             # don't pay model-swap cost every handoff
+  keep_alive: "30m"             # hold the resident model across stages in one run
+
+  # Hard ceiling on generation per turn, thinking included. Thinking models can spiral
+  # (measured: 4534 thinking tokens against 16 of answer, never finishing), and without
+  # a bound that hangs the whole pipeline rather than failing one stage.
+  num_predict: 2048
   max_loaded_models: 2          # advisory only; set OLLAMA_MAX_LOADED_MODELS to enforce
 
   # Ollama ignores a model's trained context and allocates 4096 by default. Modern
-  # 8B models (qwen3, ministral-3) are trained for ~256K, so leaving this unset runs
-  # them at a fraction of their window and silently drops the oldest tokens. With
-  # always-on retrieval plus eight tool schemas, 4096 overflows fast.
+  # 8B models are trained for far more (qwen3:8b 40960, qwen3.5 262144), so leaving
+  # this unset runs them at a fraction of their window and silently drops the oldest
+  # tokens. With always-on retrieval plus nine tool schemas, 4096 overflows fast.
   #
-  # num_ctx sets the max window AND the KV cache pre-allocated at load, so it's a
-  # memory dial, not a speed dial: measured on the M4, raising it left generation
-  # speed (~19 tok/s) and load time flat — only the footprint grew. Total in-memory
-  # size (model weights + KV), measured:
-  #             qwen3:8b     qwen3:14b
-  #     8192     6.5 GB       10.3 GB
-  #    16384     7.4 GB       12.3 GB
-  #    32768     9.8 GB       15.0 GB   <- 14b@32k brushes swap on a 16 GB box
-  # On a 16 GB M4 the safe pick with a 14B orchestrator is 8192 (~5 GB free); the
-  # tradeoff is a smaller window, so lean on the memory tools (remember +
-  # search_knowledge_base) to offload long-term state to the vector store.
+  # num_ctx sets the max window AND the KV cache pre-allocated at load, so it is a
+  # memory dial, not a speed dial: measured on an M4, raising it left generation speed
+  # (~19 tok/s) and load time flat — only the footprint grew. Filling the window is a
+  # different matter; prefill cost tracks tokens actually used.
   num_ctx: 8192
+
+  # Optional per-model override, keyed by tag, falling back to num_ctx above.
+  #
+  # Worth setting because a token of window costs wildly different amounts per model,
+  # and because only one chat model is resident at a time on a 16 GB box — so each can
+  # be sized on its own terms rather than pinned to the smallest one's ceiling.
+  # Measured on the M4 (weights + KV, GB):
+  #
+  #   num_ctx   ornith:latest (9B qwen3.5)   qwen3:8b
+  #    8192            5.48                    6.18
+  #   16384            6.35                    7.41
+  #   32768            6.40                    9.91
+  #   40960             --                    11.16   <- qwen3:8b trained max
+  #  131072           10.12                     --
+  #
+  # Give the wider window to the planning stage, which runs once and benefits from
+  # seeing everything; keep the working stages narrow, since they run most often.
+  #
+  # Do NOT reach for this to make things faster. Measured on ornith at 8192/32768/131072:
+  # load 8.40/5.38/6.39s, generation 13.6/15.4/15.3 tok/s — flat. num_ctx trades memory,
+  # not speed, in both directions. 131072 was tried and dropped: 10.12 GB for headroom the
+  # pipeline cannot use, since the lead's brief is bounded to fit the stage that reads it
+  # (a plan too wide for the next stage is TRUNCATED silently, not rejected).
+  # num_ctx_by_model:
+  #   "ornith:latest": 32768
+  #   "qwen3:8b": 8192

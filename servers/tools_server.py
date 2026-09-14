@@ -17,21 +17,14 @@ try:
 except ImportError:  # mcp 1.x
     from mcp.server.fastmcp import FastMCP as _Server
 
-from lag.tools import (
-    read_file,
-    write_file,
-    list_dir,
-    run_shell,
-    system_info,
-    remember,
-    recall,
-    web_search,
-)
+# One implementation, two consumers: these are the same functions the in-process
+# provider dispatches to, wrapped unchanged. Importing TOOLS keeps the two lists
+# from drifting — a tool added to tools.py is exposed here automatically.
+from lag.tools import TOOLS
 
 mcp = _Server("lag-tools")
 
-for _fn in (read_file, write_file, list_dir, run_shell, system_info, remember,
-            recall, web_search):
+for _fn in TOOLS.values():
     mcp.tool()(_fn)  # FastMCP builds the schema from each function's hints + docstring
 
 if __name__ == "__main__":

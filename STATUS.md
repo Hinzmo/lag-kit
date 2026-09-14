@@ -18,7 +18,7 @@ secondary. On the Mac, both the direct and `--mcp` tool paths are verified end t
 | 1 | ReAct loop over Ollama, 8 local tools | ✅ verified |
 | 2 | MCP server (stdio) wrapping those tools | ✅ verified |
 | 3 | The bridge — harness as MCP client | ✅ verified |
-| 4 | Swarm: pipeline / parallel / crew | ✅ verified |
+| 4 | Project pipeline (sequential, context passed down) | ✅ verified |
 | 5 | Nine personas | ✅ all load |
 | 6 | RAG server + always-on retrieval | ✅ verified |
 
@@ -78,36 +78,68 @@ share one collection and one ranking.
 
 ### Context window — read this before tuning anything
 
-Ollama **ignores a model's trained context** and allocates 4096 by default. `ministral-3:8b`
-is trained for 262144, so the harness was running it at 1/64th of its window and silently
-dropping the oldest tokens. The symptom is a model that "forgets" the top of its own
+Ollama **ignores a model's trained context** and allocates 4096 by default. `ornith:latest`
+is trained for 262144, so leaving it unset runs the harness at 1/64th of its window and
+silently drops the oldest tokens. The symptom is a model that "forgets" the top of its own
 conversation — never an error.
 
-`config.yaml → ollama.num_ctx` is now wired through `OllamaClient.from_config` to both the CLI
-and every swarm agent. Measured on the M4: num_ctx is a **memory dial, not a speed dial** —
-raising it left generation (~19 tok/s) and load time flat; only the footprint (weights + KV
-pre-allocated at load) grew.
+`config.yaml → ollama.num_ctx` is wired through `OllamaClient.from_config` to both the CLI and
+every pipeline stage, and `ollama.num_ctx_by_model` overrides it per tag. Measured on the M4:
+num_ctx is a **memory dial, not a speed dial** — raising it left generation (~19 tok/s) and
+load time flat; only the footprint (weights + KV pre-allocated at load) grew. *Filling* the
+window is the part that costs, since prefill tracks tokens actually used.
 
-| num_ctx | qwen3:8b | qwen3:14b | note |
-|--------:|---------:|----------:|------|
-| 8192 | 6.5 GB | 10.3 GB | **current** on the 16 GB M4 (14b, ~5 GB free) |
-| 16384 | 7.4 GB | 12.3 GB | safe for a lone 14b if little else runs |
-| 32768 | 9.8 GB | 15.0 GB | 14b brushes disk swap on 16 GB — avoid |
+Re-measured 2026-09-07 on the current pair:
 
-### Single resident model on 16 GB
+| num_ctx | `ornith:latest` | `qwen3:8b` | note |
+|--------:|----------------:|-----------:|------|
+| 8192 | 5.48 GB | 6.18 GB | **qwen3:8b runs here** — it does the bulk of the work |
+| 16384 | 6.35 GB | 7.41 GB | |
+| 32768 | 6.40 GB | 9.91 GB | qwen3:8b's KV gets expensive fast |
+| 40960 | — | 11.16 GB | qwen3:8b's trained max, and its practical ceiling |
+| 65536 | 7.64 GB | — | |
+| 131072 | 10.12 GB | — | **ornith runs here** — 16× the window for less than qwen3:8b@32768 |
 
-Two *different* chat models can't co-load on 16 GB (14b@8k 10.3 + 8b@8k 6.5 > 16), so true
-multi-model swarming isn't viable locally — it belongs on bigger/cloud hardware. Instead every
-chat role points at **one** model (`qwen3:14b`): the orchestrator stays resident and delegating
-to a persona changes the *system prompt*, not the weights — no swaps. `ollama ps` during a
-`crew` run shows just `qwen3:14b` + `nomic-embed-text` (~10.7 GB). `max_loaded_models: 2` here
-means *chat model + embedder*, not two chat models — set it to 1 and every KB search would evict
-and reload the 14b.
+Because only one model is resident at a time, each is sized on its own terms instead of being
+pinned to the smaller one's ceiling. **Current setting: ornith 32768, qwen3:8b 8192.**
 
-`num_ctx: 8192` keeps that safe, and the small window is covered by offloading state to memory:
-`remember` writes into ChromaDB, `search_knowledge_base` reads it back. To give the orchestrator
-that loop in a swarm, run with `--mcp` (`lag swarm "..." --mcp`), which backs every agent with
-both MCP servers instead of only in-process tools.
+131072 was tried and dropped. It is not a speed question — measured on ornith at
+8192 / 32768 / 131072, load was 8.40s / 5.38s / 6.39s and generation 13.6 / 15.4 / 15.3 tok/s,
+i.e. flat, so dialling the window *down* buys memory back and nothing else. It was dropped
+because 10.12 GB bought headroom the pipeline cannot use: `Pipeline._brief` is bounded to fit
+the 8192 stage that reads it, since a plan too wide for the next stage is truncated
+**silently**, not rejected.
+
+**What actually costs time is thinking, not context.** ornith has it enabled natively, and
+streaming makes the ratio visible: a one-stage run answering `1 2 3` emitted 140 thinking
+tokens against 5 answer tokens; a two-stage run, 502 against 187. That is the lever worth
+pulling if runs feel slow.
+
+### One model at a time (measured 2026-09-07)
+
+Ollama on this box holds exactly **one** chat model resident, and that is a hard concurrency
+cap — *not* a memory ceiling. Probed at num_ctx 4096 / 6144 / 8192, loading a second model
+evicted the first every time while the total sat at ~5.9 GB of 16 GB. Lowering num_ctx buys
+nothing; two chat models simply cannot co-reside here.
+
+Every switch therefore costs a full cold reload — measured `ornith` 5.7–6.4s, `qwen3:8b`
+4.4–4.9s. That single fact drove three decisions:
+
+1. **`parallel` mode was deleted.** Firing agents concurrently across two tags makes them evict
+   each other in a loop — strictly slower than sequential.
+2. **`crew` mode was deleted.** Its coordinator bookended the run and the return trip to
+   synthesize cost a second reload for nothing.
+3. **Every downstream role shares one tag** (`qwen3:8b`), so consecutive pipeline stages reuse
+   the resident weights; only the lead's `ornith` costs a load.
+
+`max_loaded_models: 2` is advisory here — the server caps at 1 regardless. Enforce for real with
+`OLLAMA_MAX_LOADED_MODELS`. The narrow working window is covered by offloading state to memory:
+`remember` writes into ChromaDB, `search_knowledge_base` reads it back. To give the lead that
+loop, run with `--mcp` (`lag pipeline "..." --mcp`), which backs every stage with both MCP
+servers instead of only in-process tools.
+
+Verified live: `lag pipeline "..." --agents architect_agent,dev_agent` completes in ~70s
+including both cold loads, and the downstream stage visibly works from the lead's plan.
 
 ---
 
@@ -139,17 +171,21 @@ the whole procedure.
 
 ## Mapped models (Mac M4 — primary)
 
-| Role | Tag | Notes |
-|------|-----|-------|
-| `orchestrator` | `qwen3:14b` | the M4 runs a 14B orchestrator comfortably |
-| `worker` | `qwen3:8b` | specialists (ASUS used `qwen3:4b`, not pulled here) |
-| `coder` | `qwen2.5-coder:7b` | dev / tester / dev_research |
-| `fast` | `llama3.2:3b` | unassigned, free for cheap calls |
-| `embed` | `nomic-embed-text` | 768-dim embeddings |
+| Role | Tag | num_ctx | Notes |
+|------|-----|--------:|-------|
+| `orchestrator` | `ornith:latest` | 32768 | 9B qwen3.5, tools+thinking; plans once per run |
+| `worker` | `qwen3:8b` | 8192 | analyst / biz_analyst / design / research |
+| `coder` | `qwen3:8b` | 8192 | dev / tester / dev_research — same tag, so no reload |
+| `fast` | `qwen3:8b` | 8192 | unassigned, free for cheap calls |
+| `embed` | `nomic-embed-text` | — | 768-dim embeddings, ~0.37 GB |
 
-`deepseek-r1:*` is installed but **unmapped on purpose** — R1 distills make poor orchestrators
-(weak structured output, and thinking tokens wreck loop latency). The ASUS ran a smaller set
-(`ministral-3:8b` orchestrator, `qwen3.5:4b` worker) at `num_ctx: 8192`.
+Remapped after an Ollama cleanup removed `qwen3:14b`, `qwen2.5-coder:7b`, `llama3.2:3b` and
+`qwen3:4b`. **Role models must support tools** — the loop is a tool-calling loop, so a
+completion-only model fails at run time. Still installed but unmappable for that reason:
+`example/completion-only-8b` and `example/completion-only-mini` (completion only).
+`persona-model:latest` does support tools but ships a baked-in persona that fights the persona
+system prompts. `example/llama-3.1-8b-instruct` supports tools but is a rough
+IQ3_M quant.
 
 ---
 
@@ -163,7 +199,7 @@ Mac (primary). The `env -u` prefixes are Ubuntu-only — see *Environment traps*
 
 .venv/bin/lag run "what is this project?"
 .venv/bin/lag run "same thing" --mcp
-.venv/bin/lag swarm "design a url shortener" --mode crew
+.venv/bin/lag pipeline "design a url shortener"
 
 .venv/bin/python servers/rag_server.py --ingest docs/
 .venv/bin/python servers/tools_server.py            # standalone, real tracebacks

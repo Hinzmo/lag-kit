@@ -49,3 +49,6 @@ htmlcov/
 
 # ── Claude Code ──────────────────────────────────────────
 .claude/settings.local.json
+
+# Agent-mode run state and stop files: per-machine, like memory/ and .chroma/
+agent/

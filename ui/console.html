@@ -154,7 +154,21 @@ body.novfx .crt{ display:none; }
   padding:var(--s3); border-bottom:1px solid var(--rule);
   display:grid; grid-template-columns:auto 1fr; gap:var(--s3);
   position:relative; transition:background .18s ease;
+  cursor:pointer;                     /* every unit takes a task directly */
 }
+.unit:hover{ background:color-mix(in srgb, var(--p) 6%, transparent); }
+.unit:hover .uname::after{
+  content:" · click to task"; color:var(--ink-3); font-size:8.5px;
+  letter-spacing:.18em; text-transform:uppercase;
+}
+.asktask{ margin:var(--s2) 0 0; }
+.askin{
+  width:100%; box-sizing:border-box; padding:6px 8px;
+  background:var(--bg-2, rgba(0,0,0,.25)); color:var(--ink-1);
+  border:1px solid var(--p); border-radius:2px;
+  font:inherit; font-size:11px; outline:none;
+}
+.askin::placeholder{ color:var(--ink-3); }
 .unit::before{ content:""; position:absolute; left:0; top:0; bottom:0; width:2px;
   background:transparent; transition:background .2s ease, box-shadow .2s ease; }
 .unit[data-state="active"]::before{ background:var(--p); box-shadow:var(--glow-m); }
@@ -183,9 +197,9 @@ body.novfx .crt{ display:none; }
 /* ── command bar ────────────────────────────────────────────────────────── */
 .cmdbar{ border-bottom:1px solid var(--rule); background:var(--panel-2);
   padding:var(--s3) var(--s4); display:flex; flex-direction:column; gap:var(--s3); }
-.swarmrow{ display:flex; align-items:center; gap:var(--s3); flex-wrap:wrap; }
-.swarmrow .lbl{ font-size:8.5px; letter-spacing:.26em; text-transform:uppercase; color:var(--ink-3); }
-.swarmrow .lbl b{ color:var(--p); font-weight:400; }
+.pipelinerow{ display:flex; align-items:center; gap:var(--s3); flex-wrap:wrap; }
+.pipelinerow .lbl{ font-size:8.5px; letter-spacing:.26em; text-transform:uppercase; color:var(--ink-3); }
+.pipelinerow .lbl b{ color:var(--p); font-weight:400; }
 .modes{ display:flex; gap:var(--s1); }
 .mode{
   font-family:var(--mono); font-size:9.5px; letter-spacing:.16em; text-transform:uppercase;
@@ -300,6 +314,47 @@ body.novfx .crt{ display:none; }
 #wiz{ position:fixed; inset:0; z-index:110; background:rgba(4,7,10,.92);
   display:none; align-items:center; justify-content:center; padding:var(--s5); }
 #wiz.on{ display:flex; }
+#agentwiz{ position:fixed; inset:0; z-index:120; background:rgba(4,7,10,.94);
+  display:none; align-items:center; justify-content:center; padding:var(--s5); }
+#agentwiz.on{ display:flex; }
+#verbose{ position:fixed; inset:0; z-index:115; background:rgba(4,7,10,.94);
+  display:none; align-items:center; justify-content:center; padding:var(--s4); }
+#verbose.on{ display:flex; }
+.vb-box{ width:min(1400px,98vw); height:min(900px,94vh); display:flex; flex-direction:column;
+  background:var(--panel); border:1px solid var(--p-ghost);
+  box-shadow:0 0 60px rgba(34,232,106,.14); }
+.vb-body{ flex:1; overflow-y:auto; padding:var(--s4); font-size:12.5px; line-height:1.65; }
+.vb-stage{ border:1px solid var(--rule); margin:0 0 var(--s4); }
+.vb-stage > h3{ margin:0; padding:8px 12px; font-size:11px; font-weight:400;
+  letter-spacing:.18em; text-transform:uppercase; color:var(--bg);
+  background:var(--p); display:flex; gap:10px; align-items:baseline; }
+.vb-stage > h3 .mdl{ opacity:.75; }
+.vb-stage > h3 .ld{ margin-left:auto; font-size:9px; }
+.vb-sec{ padding:10px 12px; border-top:1px solid var(--rule); white-space:pre-wrap;
+  word-break:break-word; }
+.vb-think{ color:var(--ink-3); font-style:italic; max-height:40vh; overflow-y:auto; }
+.vb-think.off{ display:none; }
+.vb-tool{ color:var(--wire); font-family:inherit; }
+.vb-tool b{ color:var(--p); font-weight:400; }
+.vb-out{ color:var(--ink-1); }
+.vb-tag{ font-size:9px; letter-spacing:.2em; text-transform:uppercase;
+  color:var(--ink-3); display:block; margin-bottom:4px; }
+.modelpick select{ background:rgba(0,0,0,.35); color:var(--p); border:1px solid var(--rule);
+  border-radius:2px; font:inherit; font-size:12px; padding:2px 4px; max-width:210px; }
+.modelpick select:focus{ outline:none; border-color:var(--p); }
+.modelpick a{ color:var(--ink-3); }
+#agentwiz .wiz-box{ height:auto; max-height:92vh; width:min(720px,96vw); }
+.afield{ margin:0 0 var(--s4); }
+.afield label{ display:block; font-size:8.5px; letter-spacing:.26em;
+  text-transform:uppercase; color:var(--ink-3); margin-bottom:6px; }
+.afield input, .afield select{
+  width:100%; box-sizing:border-box; padding:8px 10px;
+  background:rgba(0,0,0,.3); color:var(--ink-1);
+  border:1px solid var(--rule); border-radius:2px; font:inherit; font-size:12px; }
+.afield input:focus, .afield select:focus{ outline:none; border-color:var(--p); }
+.arow{ display:grid; grid-template-columns:1fr 1fr 1fr; gap:var(--s3); }
+.awarn{ border:1px solid var(--amber); padding:var(--s3); margin:0 0 var(--s4);
+  font-size:11px; color:var(--amber); line-height:1.5; }
 .wiz-box{
   width:min(1000px,96vw); height:min(680px,92vh);
   background:var(--panel); border:1px solid var(--p-ghost);
@@ -428,7 +483,7 @@ body.novfx .crt{ display:none; }
     <div class="boot-line" data-d="3">servers/rag_server.py .................... <span style="color:var(--p-core)">UP</span>  retrieval always-on</div>
     <div class="boot-line" data-d="4">chroma ./.chroma ......................... <span style="color:var(--p-core)">OK</span>  9 chunks · 768d</div>
     <div class="boot-line" data-d="5">personas/ ................................ <span style="color:var(--p-core)">OK</span>  9 loaded</div>
-    <div class="boot-line" data-d="6">chat model ............................... <span style="color:var(--p-core)">ministral-3:8b</span>  ctx 8192</div>
+    <div class="boot-line" data-d="6">chat model ............................... <span style="color:var(--p-core)">loading…</span>  ctx 8192</div>
     <div class="boot-line" data-d="7">web_search ............................... <span style="color:var(--p-core)">UP</span>  duckduckgo · keyless</div>
     <div class="boot-bar"><i></i></div>
   </div>
@@ -447,7 +502,10 @@ body.novfx .crt{ display:none; }
       <button id="chip-x" title="End project" aria-label="End project">✕</button>
     </div>
     <div class="mast-meta">
-      <div class="meta"><b id="m-model">ministral-3:8b</b><span>chat model</span></div>
+      <div class="meta modelpick">
+        <select id="m-pick" aria-label="Model for this run"><option value="">loading…</option></select>
+        <span>chat model · <a href="#" id="m-reset">per-persona</a></span>
+      </div>
       <div class="meta"><b style="color:var(--rag)">active</b><span>retrieval</span></div>
       <div class="meta"><b style="color:var(--wire)">mcp · stdio</b><span>transport</span></div>
       <div class="meta"><b id="m-uptime">00:00</b><span>session</span></div>
@@ -464,14 +522,15 @@ body.novfx .crt{ display:none; }
     <main class="stage">
 
       <div class="cmdbar">
-        <div class="swarmrow">
-          <span class="lbl">swarm · <b id="swarm-state">off</b></span>
-          <div class="modes" role="group" aria-label="Swarm mode">
+        <div class="pipelinerow">
+          <span class="lbl">pipeline · <b id="pipeline-state">off</b></span>
+          <div class="modes" role="group" aria-label="Pipeline">
             <button class="mode" data-mode="pipeline" aria-pressed="false">pipeline</button>
-            <button class="mode" data-mode="parallel" aria-pressed="false">parallel</button>
-            <button class="mode" data-mode="crew"     aria-pressed="false">crew</button>
           </div>
           <span class="lbl" style="color:var(--ink-3)">click again to disengage</span>
+          <button class="mode" id="vb-open" style="margin-left:auto">activity</button>
+          <button class="mode" id="agent-open">agent mode</button>
+          <button class="mode" id="agent-stop" hidden>stop agent</button>
         </div>
         <div class="prompt" id="promptwrap">
           <span class="chev">&gt;</span>
@@ -485,7 +544,7 @@ body.novfx .crt{ display:none; }
         <div id="chat">
           <div class="empty">
             <b>ready</b>
-            ministral-3:8b · 8192 ctx · retrieval active · 9 tools over mcp<br>
+            loading… · 8192 ctx · retrieval active · 9 tools over mcp<br>
             ask a question, or start a project from the top bar
           </div>
         </div>
@@ -546,6 +605,79 @@ body.novfx .crt{ display:none; }
   </footer>
 </div>
 
+<!-- ═══ VERBOSE ACTIVITY ═════════════════════════════════════════════════ -->
+<div id="verbose" role="dialog" aria-modal="true" aria-labelledby="vb-title">
+  <div class="vb-box">
+    <div class="wiz-head">
+      <div>
+        <h2 id="vb-title">activity</h2>
+        <div class="sub" id="vb-sub">every stage, in full — thinking included</div>
+      </div>
+      <div class="grow">
+        <button class="btn" id="vb-think" aria-pressed="true">thinking: on</button>
+        <button class="wiz-x" id="vb-close" aria-label="Close">✕</button>
+      </div>
+    </div>
+    <div class="vb-body" id="vb-body"></div>
+  </div>
+</div>
+
+<!-- ═══ AGENT MODE ═══════════════════════════════════════════════════════ -->
+<div id="agentwiz" role="dialog" aria-modal="true" aria-labelledby="aw-title">
+  <div class="wiz-box">
+    <div class="wiz-head">
+      <div>
+        <h2 id="aw-title">agent mode</h2>
+        <div class="sub">one persona, one goal, running until it is met or you stop it</div>
+      </div>
+      <button class="wiz-x" id="aw-close" aria-label="Close">✕</button>
+    </div>
+
+    <div class="wiz-body" style="padding:var(--s5)">
+      <div class="awarn">
+        Agent mode runs with <b>full autonomy</b> — the same unsandboxed shell and
+        filesystem the CLI has, unattended, in a loop. It stops when it calls
+        <b>mark_done</b>, when it hits the cycle cap, or when you press <b>stop agent</b>.
+      </div>
+
+      <div class="afield">
+        <label for="aw-goal">goal — what should it achieve?</label>
+        <input id="aw-goal" placeholder="e.g. audit src/ for TODOs and write a report to notes/todo.md">
+      </div>
+      <div class="afield">
+        <label for="aw-success">done when — how will it know it is finished?</label>
+        <input id="aw-success" placeholder="leave blank to let the agent decide">
+      </div>
+      <div class="afield">
+        <label for="aw-constraints">must not — anything it should keep away from</label>
+        <input id="aw-constraints" placeholder="e.g. do not touch git history or push anything">
+      </div>
+      <div class="arow">
+        <div class="afield">
+          <label for="aw-persona">persona</label>
+          <select id="aw-persona"></select>
+        </div>
+        <div class="afield">
+          <label for="aw-interval">seconds between cycles</label>
+          <input id="aw-interval" type="number" min="0" value="0">
+        </div>
+        <div class="afield">
+          <label for="aw-cycles">max cycles (0 = until done)</label>
+          <input id="aw-cycles" type="number" min="0" value="0">
+        </div>
+      </div>
+    </div>
+
+    <div class="wiz-foot">
+      <span class="hint" id="aw-hint">the goal is the only required field</span>
+      <div class="grow">
+        <button class="btn" id="aw-cancel">cancel</button>
+        <button class="btn go" id="aw-start">start agent</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- ═══ WIZARD ═══════════════════════════════════════════════════════════ -->
 <div id="wiz" role="dialog" aria-modal="true" aria-labelledby="wiz-title">
   <div class="wiz-box">
@@ -586,7 +718,7 @@ body.novfx .crt{ display:none; }
               <span class="pt">Orchestrated</span>
               <span class="pd">architect_agent decomposes the brief, delegates to specialists, then
                 synthesises their output into one result. Hands-off.</span>
-              <span class="pmeta"><span class="tag model">ministral-3:8b</span><span class="tag">auto-delegate</span></span>
+              <span class="pmeta"><span class="tag model">loading…</span><span class="tag">auto-delegate</span></span>
             </button>
             <button class="pick" data-orch="manual" aria-pressed="false">
               <span class="pt">Manual assignment</span>
@@ -606,33 +738,30 @@ body.novfx .crt{ display:none; }
           <div class="picks" id="model-picks"></div>
         </section>
 
-        <!-- 4 SWARM -->
+        <!-- 4 PIPELINE -->
         <section class="wpane" data-step="3">
-          <div class="wtitle">Run it as a swarm?</div>
-          <div class="wnote">A swarm puts several agents on the work at once. Pick one or more modes —
-            with several selected they run in sequence, each stage feeding the next.</div>
+          <div class="wtitle">Run it as a pipeline?</div>
+          <div class="wnote">Stages run in the order you set, each seeing everything produced above it.
+            Order is meaning — design, then build, then review — and it is also the cost: only one
+            model stays resident, so every change of model between stages costs a reload.</div>
           <div class="toggle">
-            <button class="sw" id="sw-swarm" aria-pressed="true" aria-label="Use swarm"><i></i></button>
+            <button class="sw" id="sw-pipeline" aria-pressed="true" aria-label="Use pipeline"><i></i></button>
             <div>
-              <div class="tl">Use a swarm</div>
+              <div class="tl">Use a pipeline</div>
               <div class="td">Off runs a single agent on the whole brief.</div>
             </div>
           </div>
-          <div class="picks" id="swarm-picks" style="margin-top:var(--s4)">
-            <button class="pick" data-sm="pipeline" aria-pressed="false">
-              <span class="pt">pipeline</span>
-              <span class="pd">Each agent builds on the previous one's output. Best when the work has a
-                natural order — design, then build, then review.</span>
+          <div class="picks" id="pipeline-picks" style="margin-top:var(--s4)">
+            <button class="pick" data-sm="pipeline" aria-pressed="true">
+              <span class="pt">plan first</span>
+              <span class="pd">The lead stage writes one instruction per stage below it before any work
+                starts, and those instructions ride the context down the line. It is never called
+                back, which keeps the run to one model load per distinct model.</span>
             </button>
-            <button class="pick" data-sm="parallel" aria-pressed="false">
-              <span class="pt">parallel</span>
-              <span class="pd">Every agent tackles the brief at once and the outputs are concatenated.
-                Fast, and good for gathering independent perspectives.</span>
-            </button>
-            <button class="pick" data-sm="crew" aria-pressed="true">
-              <span class="pt">crew</span>
-              <span class="pd">The first agent coordinates: decompose, delegate to specialists,
-                synthesise. The most autonomous mode.</span>
+            <button class="pick" data-sm="no-plan" aria-pressed="false">
+              <span class="pt">straight through</span>
+              <span class="pd">Skip the briefing and put every stage straight onto the task, each
+                building on the output above it.</span>
             </button>
           </div>
         </section>
@@ -678,8 +807,8 @@ const esc = s => String(s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":
 
 /* ══ real project data ══════════════════════════════════════════════════ */
 const AGENTS = [
-  {n:"architect_agent",    r:"System design. The hardest reasoning role.",             m:"ministral-3:8b", t:4},
-  {n:"senior_dev_agent",   r:"Code review and quality. Correctness and edge cases.",   m:"ministral-3:8b", t:3},
+  {n:"architect_agent",    r:"System design. The hardest reasoning role.",             m:"loading…", t:4},
+  {n:"senior_dev_agent",   r:"Code review and quality. Correctness and edge cases.",   m:"loading…", t:3},
   {n:"dev_agent",          r:"Implementation. Writes working code from a spec.",       m:"qwen3.5:4b",     t:4},
   {n:"tester_agent",       r:"Writes and runs tests against implemented code.",        m:"qwen3.5:4b",     t:4},
   {n:"analyst_agent",      r:"Technical analysis of data, logs, and agent output.",    m:"qwen3.5:4b",     t:5},
@@ -690,7 +819,7 @@ const AGENTS = [
 ];
 const TOOLS  = ["read_file","write_file","list_dir","run_shell","system_info","remember","recall"];
 const MODELS = [
-  {n:"ministral-3:8b", g:6.02, p:"8B", ok:true,  d:"General reasoning with solid structured output. The default for chat and orchestration.", badge:"recommended"},
+  {n:"loading…", g:6.02, p:"8B", ok:true,  d:"General reasoning with solid structured output. The default for chat and orchestration.", badge:"recommended"},
   {n:"deepseek-r1:8b", g:5.23, p:"8B", ok:false, d:"R1 distill. In the size band, but weak at structured output and the thinking tokens destroy loop latency.", badge:"poor orchestrator"},
   {n:"qwen3.5:4b",     g:3.39, p:"4B", ok:false, d:"Fast and light. Below the 8B band — fine for specialists, underpowered for driving a project.", badge:"below band"},
 ];
@@ -701,13 +830,334 @@ const CHUNKS = [
 
 /* ══ state ══════════════════════════════════════════════════════════════ */
 const S = {
-  model: "ministral-3:8b",
-  swarm: null,            // null | pipeline | parallel | crew
-  project: null,          // {name, obj, orch, model, swarm, modes[], assign[]}
+  model: "loading…",
+  pipeline: null,            // null | pipeline | no-plan
+  project: null,          // {name, obj, orch, model, pipeline, modes[], assign[]}
   running: false,
 };
 
+/* ══ verbose activity ═══════════════════════════════════════════════════
+   The chat pane shows answers. This shows the work: every stage, its thinking, each
+   tool call and what came back. Thinking is the bulk of it on these models and is the
+   whole reason the pane exists — but it is also 90% of the volume, so it collapses.
+   Fed from the same event stream, so it is never a second source of truth. */
+const VB = {
+  body: null, stage: null, think: null, out: null, showThink: true,
+  open(){ $("#verbose").classList.add("on"); this.scroll(); },
+  close(){ $("#verbose").classList.remove("on"); },
+  get el(){ return this.body || (this.body = $("#vb-body")); },
+  scroll(){ const b = this.el; b.scrollTop = b.scrollHeight; },
+  clear(){ this.el.innerHTML = ""; this.stage = this.think = this.out = null; },
+
+  beginStage(name, model, loaded, role){
+    const box = el("div","vb-stage");
+    box.innerHTML =
+      `<h3>${name}<span class="mdl">${model}</span>` +
+      `<span class="ld">${loaded ? "cold load" : "resident"}${role==="lead" ? " · lead" : ""}</span></h3>`;
+    this.el.appendChild(box);
+    this.stage = box; this.think = null; this.out = null;
+    this.scroll();
+  },
+  _sec(kind, tag){
+    if(!this.stage) this.beginStage("(run)", "", false);
+    const d = el("div", `vb-sec ${kind}`);
+    d.innerHTML = `<span class="vb-tag">${tag}</span>`;
+    this.stage.appendChild(d);
+    return d;
+  },
+  thinking(text){
+    if(!this.think){
+      this.think = this._sec("vb-think", "reasoning");
+      if(!this.showThink) this.think.classList.add("off");
+    }
+    this.think.appendChild(document.createTextNode(text));
+    this.scroll();
+  },
+  token(text){
+    if(!this.out) this.out = this._sec("vb-out", "output");
+    this.out.appendChild(document.createTextNode(text));
+    this.scroll();
+  },
+  tool(name, args){
+    const d = this._sec("vb-tool", "tool call");
+    d.insertAdjacentHTML("beforeend", `<b>${name}</b>(${esc(JSON.stringify(args||{}))})`);
+    this.out = null;            // output after a tool call is a new section
+    this.scroll();
+  },
+  toolResult(name, content){
+    const d = this._sec("vb-tool", `result · ${name}`);
+    d.appendChild(document.createTextNode(String(content).slice(0, 4000)));
+    this.scroll();
+  },
+  note(kind, text){
+    const d = this._sec("vb-out", kind);
+    d.appendChild(document.createTextNode(text));
+    this.scroll();
+  },
+};
+$("#vb-open").addEventListener("click", () => VB.open());
+$("#vb-close").addEventListener("click", () => VB.close());
+$("#verbose").addEventListener("keydown", e => { if(e.key === "Escape") VB.close(); });
+$("#vb-think").addEventListener("click", () => {
+  VB.showThink = !VB.showThink;
+  const b = $("#vb-think");
+  b.textContent = "thinking: " + (VB.showThink ? "on" : "off");
+  b.setAttribute("aria-pressed", String(VB.showThink));
+  $$(".vb-think").forEach(n => n.classList.toggle("off", !VB.showThink));
+});
+
+/* Every run funnels through here, so the drawer stays in step with the chat pane
+   whichever path produced the events. */
+function vbEvent(e){
+  if(e.type === "routing")        VB.note("routing", `${e.lead} choosing from ${e.candidates.length} agents…`);
+  else if(e.type === "routed")    VB.note("routed", e.agents.map(a=>`${a.name} (${a.model})`).join(" → "));
+  else if(e.type === "stage")     VB.beginStage(e.name, e.model, e.loaded, e.role);
+  else if(e.type === "cycle")     VB.beginStage(`cycle ${e.n}`, e.model, true);
+  else if(e.type === "agent_start") VB.beginStage(e.persona, e.model, true, "lead");
+  else if(e.type === "thinking")  VB.thinking(e.text);
+  else if(e.type === "token")     VB.token(e.text);
+  else if(e.type === "tool")      VB.tool(e.name, e.args);
+  else if(e.type === "tool_result") VB.toolResult(e.name, e.content);
+  else if(e.type === "trimmed")   VB.note("context trimmed", `${e.dropped_chars} chars dropped to fit ${e.model} (${e.window})`);
+  else if(e.type === "no_tools")    VB.note("no tools", e.message);
+  else if(e.type === "turn_error")  VB.note("turn error", e.message + " — retrying");
+  else if(e.type === "cycle_error") VB.note("cycle error", e.message + " — continuing");
+  else if(e.type === "error")     VB.note("error", e.message);
+  else if(e.type === "agent_done") VB.note("done", e.summary || "");
+  else if(e.type === "agent_stop") VB.note("stopped", (e.detail || e.reason || "") + (e.last_error ? " · " + e.last_error : ""));
+}
+
+/* ══ model picker ═══════════════════════════════════════════════════════
+   Empty value = each persona keeps its configured model (the default). Choosing one
+   runs every stage on it, which also means zero reloads, since the stages then share
+   the resident weights. */
+const MODEL = { override: "" };
+/* Capability comes from ollama itself (/api/state -> ollama.models), never a
+   hardcoded list — a new pull is classified correctly without touching this file.
+   Tool-capable models are grouped first. Completion-only ones stay listed rather than
+   hidden: they are perfectly good for plain generation, and hiding a model you have
+   installed is more confusing than labelling it. Embedding models are not chat models
+   and are dropped entirely. */
+const MODELCAPS = {};
+function fillModels(state){
+  const sel = $("#m-pick");
+  sel.innerHTML = "";
+  const per = el("option");
+  per.value = ""; per.textContent = state.chat_model + "  (per-persona)";
+  sel.appendChild(per);
+
+  const models = (state.ollama && state.ollama.models) || [];
+  models.forEach(m => { MODELCAPS[m.name] = m; });
+  const chat = models.filter(m => !m.embedding);
+  const withTools = chat.filter(m => m.tools);
+  const noTools  = chat.filter(m => !m.tools);
+
+  const group = (label, list) => {
+    if(!list.length) return;
+    const g = el("optgroup"); g.label = label;
+    list.forEach(m => {
+      const o = el("option"); o.value = m.name;
+      o.textContent = m.name + (m.thinking ? "  · reasoning" : "");
+      g.appendChild(o);
+    });
+    sel.appendChild(g);
+  };
+  group("tools + reasoning", withTools);
+  group("no tool calling — chat only", noTools);
+
+  // A model listed by ollama but never probed has no entry; fall back rather than
+  // clearing a choice the user made.
+  if(MODEL.override && !MODELCAPS[MODEL.override]) MODEL.override = "";
+  sel.value = MODEL.override;
+}
+$("#m-pick").addEventListener("change", e => {
+  MODEL.override = e.target.value;
+  if(!MODEL.override){
+    say("lag","msg-ai").textContent =
+      "Model override cleared — each persona uses its configured model again.";
+    return;
+  }
+  const m = MODELCAPS[MODEL.override] || {};
+  const b = say("lag","msg-ai");
+  if(m.tools === false){
+    // Worth interrupting for: the run will still work, but it loses every tool, which
+    // is most of what this kit does.
+    b.style.color = "var(--amber)";
+    b.textContent =
+      `${MODEL.override} cannot call tools. It will still answer, but with no file ` +
+      `access, shell, retrieval or memory — replies come from what the model already ` +
+      `knows. Pick a "tools + reasoning" model to get the toolset back.`;
+  } else {
+    b.textContent =
+      `Model override: every stage runs on ${MODEL.override} — one cold load for the ` +
+      `whole run instead of one per model change.`;
+  }
+});
+$("#m-reset").addEventListener("click", e => {
+  e.preventDefault();
+  MODEL.override = ""; $("#m-pick").value = "";
+});
+
+/* ══ agent mode ═════════════════════════════════════════════════════════
+   The browser is a VIEWER here, not the owner. Closing the tab does not stop the
+   agent — the loop runs in the server process and keeps its own state on disk —
+   so stopping is an explicit request, and reopening shows whatever is still going. */
+const AW = { running:false, name:"console", ctrl:null };
+
+function agentOpen(){
+  const sel = $("#aw-persona");
+  if(!sel.options.length){
+    (window.AGENTS || []).forEach(a => {
+      const o = el("option"); o.value = a.n;
+      o.textContent = `${a.n} — ${a.m||""}`;
+      sel.appendChild(o);
+    });
+    sel.value = "dev_agent";
+  }
+  $("#agentwiz").classList.add("on");
+  setTimeout(() => $("#aw-goal").focus(), 30);
+}
+const agentClose = () => $("#agentwiz").classList.remove("on");
+
+function agentRunning(on){
+  AW.running = on;
+  $("#agent-stop").hidden = !on;
+  $("#agent-open").textContent = on ? "agent running…" : "agent mode";
+  $("#agent-open").disabled = on;
+}
+
+async function agentStop(){
+  try{
+    await fetch("/api/agent/stop?name=" + encodeURIComponent(AW.name), {method:"POST"});
+    say("agent","msg-ai").textContent = "stop requested — it will exit after this cycle.";
+  }catch(e){ /* the run ends on its own if the server is gone */ }
+}
+
+async function agentStart(){
+  const goal = $("#aw-goal").value.trim();
+  if(!goal){ $("#aw-hint").textContent = "a goal is required"; $("#aw-goal").focus(); return; }
+  agentClose();
+  clearEmpty();
+  agentRunning(true);
+  say("you → agent","msg-me").textContent = goal;
+
+  VB.clear();
+  const th = thinkingLine();
+  th.set("starting agent…");
+  let box = null, answer = null, cycle = 0;
+
+  const openAnswer = (label) => {
+    if(box) return;
+    box = say(label, "msg-ai");
+    answer = el("p"); box.appendChild(answer);
+    answer.appendChild(el("span","cursor"));
+  };
+
+  const onEvent = (e) => {
+    vbEvent(e);
+    if(e.type === "agent_start"){
+      Tps.start(); resetUnits();
+      th.set(`${e.persona} · ${e.model}${e.resumed ? " · resuming" : ""}`);
+      setUnit(e.persona, "active");
+    } else if(e.type === "cycle"){
+      cycle = e.n;
+      if(box){ const c = answer.querySelector(".cursor"); if(c) c.remove(); box = null; answer = null; }
+      th.kill(); Object.assign(th, thinkingLine());
+      th.set(`cycle ${e.n} · ${e.model}`);
+    } else if(e.type === "thinking"){
+      Tps.bump(e.text.length);
+    } else if(e.type === "token"){
+      Tps.bump(e.text.length);
+      openAnswer(`agent · cycle ${cycle}`);
+      answer.querySelector(".cursor").insertAdjacentText("beforebegin", e.text);
+      scroll();
+    } else if(e.type === "tool"){
+      th.set(`cycle ${cycle} · ${e.name}(${JSON.stringify(e.args).slice(0,60)})`, true);
+    } else if(e.type === "idle"){
+      th.set(`idle ${e.seconds}s — waiting for the next cycle`);
+    } else if(e.type === "cycle_error"){
+      const b = say("agent · cycle "+e.n,"msg-ai");
+      b.style.color = "var(--amber)";
+      b.textContent = "cycle failed: " + e.message + " — continuing";
+    } else if(e.type === "agent_done"){
+      say("agent · done","msg-ai").textContent =
+        `Goal met after ${e.cycle} cycle(s). ${e.summary||""}`;
+    } else if(e.type === "agent_stop"){
+      const b = say("agent · stopped","msg-ai");
+      // A breaker tripping is not routine — it means the agent could not make
+      // progress, which is worth colouring differently from "you pressed stop".
+      if(e.reason === "failed_cycles" || e.reason === "no_progress")
+        b.style.color = "var(--amber)";
+      b.textContent = `Stopped at cycle ${e.cycle} — ` +
+        (e.detail || e.reason) +
+        (e.last_error ? `\nLast error: ${e.last_error}` : "");
+    } else if(e.type === "error"){
+      const b = say("fault","msg-ai"); b.style.color="var(--fault)"; b.textContent = e.message;
+    }
+  };
+
+  try{
+    AW.ctrl = new AbortController();
+    const res = await fetch("/api/agent/start", {
+      method:"POST", headers:{"Content-Type":"application/json"},
+      signal: AW.ctrl.signal,
+      body: JSON.stringify({
+        goal,
+        success: $("#aw-success").value.trim(),
+        constraints: $("#aw-constraints").value.trim(),
+        persona: $("#aw-persona").value || "dev_agent",
+        interval: parseInt($("#aw-interval").value || "0", 10),
+        max_cycles: parseInt($("#aw-cycles").value || "0", 10),
+        name: AW.name,
+        model: MODEL.override || "",
+      }),
+    });
+    if(!res.ok || !res.body) throw new Error("agent stream unavailable ("+res.status+")");
+    const reader = res.body.getReader(), dec = new TextDecoder();
+    let buf = "";
+    for(;;){
+      const {done, value} = await reader.read();
+      if(done) break;
+      buf += dec.decode(value, {stream:true});
+      const frames = buf.split("\n\n"); buf = frames.pop();
+      for(const f of frames){
+        const line = f.split("\n").find(l => l.startsWith("data: "));
+        if(!line) continue;
+        try { onEvent(JSON.parse(line.slice(6))); } catch(_){}
+      }
+    }
+  } catch(err){
+    const b = say("fault","msg-ai"); b.style.color="var(--fault)";
+    b.textContent = String(err.message || err);
+  } finally {
+    Tps.stop(); th.kill();
+    if(answer){ const c = answer.querySelector(".cursor"); if(c) c.remove(); }
+    resetUnits(); agentRunning(false); scroll();
+  }
+}
+
+$("#agent-open").addEventListener("click", agentOpen);
+$("#aw-close").addEventListener("click", agentClose);
+$("#aw-cancel").addEventListener("click", agentClose);
+$("#aw-start").addEventListener("click", agentStart);
+$("#agent-stop").addEventListener("click", agentStop);
+$("#agentwiz").addEventListener("keydown", e => {
+  if(e.key === "Escape") agentClose();
+  if(e.key === "Enter" && e.target.id !== "aw-start") agentStart();
+});
+
+/* If an agent is already running server-side, say so on load rather than pretending
+   the console owns it. */
+fetch("/api/agent/status?name=console").then(r => r.json()).then(d => {
+  if(d && d.running){
+    agentRunning(true);
+    say("agent","msg-ai").textContent =
+      `An agent is already running (cycle ${d.cycle}): ${d.goal}`;
+  }
+}).catch(()=>{});
+
 /* ══ roster ═════════════════════════════════════════════════════════════ */
+window.AGENTS = AGENTS;   // the agent-mode persona picker reads this
 const roster = $("#roster");
 AGENTS.forEach((a,i) => {
   const u = el("div","unit");
@@ -778,7 +1228,28 @@ function drawSpark(){
 }
 drawSpark();
 const pushTps = v => { series.push(v); series.shift(); $("#tps").textContent=v.toFixed(1); drawSpark(); };
-const tick = () => pushTps(7 + Math.random()*11);
+
+/* Real throughput, measured off the event stream. This used to be
+   `pushTps(7 + Math.random()*11)` — a mockup that invented a number, which is why the
+   meter looked alive while meaning nothing. Thinking tokens count: on these models they
+   are most of the generation, so excluding them would understate the model's actual
+   output rate and read as 0 during the long reasoning pauses. */
+const Tps = {
+  t0:0, n:0, last:0,
+  start(){ this.t0 = performance.now(); this.n = 0; this.last = this.t0; pushTps(0); },
+  bump(chars){
+    this.n += Math.max(1, Math.round(chars / 4));   // ~4 chars per token
+    const now = performance.now();
+    if(now - this.last < 400) return;               // sample ~2.5x/s, not per token
+    this.last = now;
+    const secs = (now - this.t0) / 1000;
+    if(secs > 0.2) pushTps(this.n / secs);
+  },
+  stop(){
+    const secs = (performance.now() - this.t0) / 1000;
+    if(secs > 0.2) pushTps(this.n / secs);
+  },
+};
 function loadModel(name){
   const p = mBox.querySelector(`[data-m="${name}"]`), m = mBox.querySelector(`[data-mm="${name}"] i`);
   if(p) p.className="pip up";
@@ -911,92 +1382,157 @@ async function soloTurn(q){
   tick();
 }
 
-async function swarmTurn(q, mode){
-  const crew = S.project && S.project.orch === "manual" && S.project.assign.length
-    ? S.project.assign.map(a => a.n)
-    : ["architect_agent","dev_agent","senior_dev_agent"];
-
-  const th = thinkingLine();
-  loadModel(S.model);
-  await sleep(300);
-  await retrieve(q, th);
-
-  if(mode === "parallel"){
-    th.set(`${crew.length} agents working in parallel`);
-    crew.forEach(c => setUnit(c,"active"));
-    for(let i=0;i<4;i++){ tick(); await sleep(420); }
-    crew.forEach(c => setUnit(c,"done"));
-  } else if(mode === "crew"){
-    th.set("architect_agent decomposing the brief");
-    setUnit("architect_agent","active");
-    await sleep(700); tick();
-    setUnit("architect_agent","done");
-    for(const c of crew.filter(c => c !== "architect_agent")){
-      th.set(`${c} working`);
-      setUnit(c,"active");
-      await toolTurn("write_file", {path:"url_shortener_service.py", content:"…"});
-      tick(); await sleep(280);
-      setUnit(c,"done");
-    }
-    th.set("architect_agent synthesising");
-    setUnit("architect_agent","active");
-    await sleep(620); tick();
-    setUnit("architect_agent","done");
-  } else {
-    for(const c of crew){
-      th.set(`${c} — stage ${crew.indexOf(c)+1} of ${crew.length}`);
-      setUnit(c,"active");
-      await sleep(560); tick();
-      setUnit(c,"done");
-    }
-  }
-
-  th.kill();
-  const box = say(`lag · ${mode} · ${crew.length} agents`, "msg-ai");
-  const out = mode === "parallel"
-    ? "Three independent passes, merged.\n\nAll three converged on base62 over a monotonic counter, "+
-      "which makes collisions structurally impossible. They split on storage: two chose SQLite behind "+
-      "a repository interface, one argued for a flat append-only log. The repository interface wins — "+
-      "it keeps the storage decision reversible."
-    : "**Design accepted.** Base62 over a 64-bit counter, SQLite behind a StorageAdapter interface, "+
-      "so collisions cannot occur by construction and the storage layer stays swappable.\n\n"+
-      "Review flagged one real gap: nothing expires. Mappings live forever, which is fine for a "+
-      "personal tool and wrong for anything public. Add a TTL column before this leaves your machine.";
-  for(const p of paras(out)){
-    const n = el("p"); n.innerHTML = ""; box.appendChild(n);
-    await typeInto(n, p.replace(/\*\*(.+?)\*\*/g, "$1"));
-  }
-  tick();
-}
+// swarmTurn() lived here — a scripted simulation of the old parallel/crew modes.
+// Both modes are gone (only one chat model stays resident, so concurrent agents on
+// different tags evict each other), and realTurn() drives the real backend.
 
 /* ══ real turn — talks to the backend ═══════════════════════════════════ */
-async function realTurn(q, mode){
-  const th = thinkingLine();
-  th.set(mode ? `running swarm · ${mode}` : "thinking");
-  loadModel(S.model);
-  let data;
+async function realTurn(q, mode, opts){
+  opts = opts || {};
+  const agents = opts.agents !== undefined ? opts.agents
+    : ((S.project && S.project.orch==="manual" && S.project.assign.length)
+        ? S.project.assign.map(a=>a.n).join(",") : null);
+  const plan = opts.plan !== undefined ? opts.plan : (mode !== "no-plan");
+
+  // One thinking line PER STAGE. It used to be a single line killed on the first
+  // token, which left every stage after the first with no progress indicator at all —
+  // later set() calls wrote to a node already detached from the DOM.
+  VB.clear();
+  let th = thinkingLine();
+  th.set(mode ? "starting pipeline" : "thinking");
+  const newThinkingLine = () => { th.kill(); th = thinkingLine(); return th; };
+
+  let box = null, answer = null, streamed = "", faulted = false;
+  let thinkChars = 0, curStage = null;
+
+  // The answer node is created on the FIRST token, not up front, so the thinking line
+  // stays put while the model reasons and the message appears only when it has words.
+  const openAnswer = (label) => {
+    if(box) return;
+    th.kill();          // this stage is talking now; its next stage gets a fresh line
+    box = say(label, "msg-ai");
+    answer = el("p"); box.appendChild(answer);
+    answer.appendChild(el("span","cursor"));
+  };
+
+  const onEvent = (e) => {
+    vbEvent(e);
+    if(e.type === "routing"){
+      th.set(`${e.lead} · ${e.model} · choosing the team from ${e.candidates.length} agents…`);
+      resetUnits();
+    } else if(e.type === "routed"){
+      const picked = e.agents.map(a=>a.name);
+      th.set(`routed → ${picked.join(" → ")}`);
+      say(`lag · ${e.lead} routed`, "msg-ai").textContent =
+        `Chose ${picked.length} of the roster: ${picked.join(", ")}.`;
+      if(box){ box = null; answer = null; }
+    } else if(e.type === "route_fallback"){
+      say("lag · routing","msg-ai").textContent =
+        `Could not parse a route; falling back to ${e.agents.join(" → ")}.`;
+    } else if(e.type === "start"){
+      Tps.start();
+      const s0 = (e.stages||[]).map(x=>x.name).join(" → ");
+      th.set(`${(e.stages||[]).length} stage(s) · ${e.loads} model load(s) · ${s0}`);
+      resetUnits();
+    } else if(e.type === "stage"){
+      if(curStage) setUnit(curStage, "done");
+      curStage = e.name; setUnit(e.name, "active");
+      loadModel(e.model);
+      thinkChars = 0;
+      if(box){                       // previous stage finished: close it out, start fresh
+        const c = answer && answer.querySelector(".cursor"); if(c) c.remove();
+        box = null; answer = null;
+        newThinkingLine();
+      }
+      th.set(`${e.name} · ${e.model}${e.loaded ? " · loading model…" : " · resident"}`);
+    } else if(e.type === "thinking"){
+      Tps.bump(e.text.length);
+      thinkChars += e.text.length;
+      if(!box) th.set(`${curStage||"thinking"} · reasoning (${thinkChars} chars)`);
+    } else if(e.type === "token"){
+      Tps.bump(e.text.length);
+      openAnswer(`lag · ${curStage||"agent"}`);
+      streamed += e.text;
+      answer.querySelector(".cursor").insertAdjacentText("beforebegin", e.text);
+      scroll();
+    } else if(e.type === "no_tools"){
+      const b = say("lag","msg-ai"); b.style.color = "var(--amber)"; b.textContent = e.message;
+    } else if(e.type === "tool"){
+      th.set(`${curStage||"agent"} · ${e.name}(${JSON.stringify(e.args).slice(0,60)})`, true);
+    } else if(e.type === "error"){
+      faulted = true; th.kill();
+      const b = say("fault","msg-ai"); b.style.color="var(--fault)"; b.textContent = e.message;
+    } else if(e.type === "done"){
+      if(!box && e.answer) { openAnswer(`lag · ${curStage||"agent"}`); answer.querySelector(".cursor")
+        .insertAdjacentText("beforebegin", e.answer); }
+    }
+  };
+
   try{
-    const res = await fetch("/api/run", {
+    const res = await fetch("/api/stream", {
       method:"POST", headers:{"Content-Type":"application/json"},
-      body: JSON.stringify({
-        prompt:q,
-        mode: mode || "solo",
-        agents: (S.project && S.project.orch==="manual" && S.project.assign.length)
-          ? S.project.assign.map(a=>a.n).join(",") : null,
-      }),
+      body: JSON.stringify({ prompt:q, mode: mode ? "pipeline" : "solo", plan, agents,
+                             model: MODEL.override || null }),
     });
-    data = await res.json();
-  } finally { th.kill(); }
-  if(!data || data.error){
+    if(!res.ok || !res.body) throw new Error("stream unavailable ("+res.status+")");
+
+    // SSE over fetch: frames are "data: {...}\n\n", and a chunk can split one, so the
+    // tail is carried over rather than parsed.
+    const reader = res.body.getReader(), dec = new TextDecoder();
+    let buf = "";
+    for(;;){
+      const {done, value} = await reader.read();
+      if(done) break;
+      buf += dec.decode(value, {stream:true});
+      const frames = buf.split("\n\n"); buf = frames.pop();
+      for(const f of frames){
+        const line = f.split("\n").find(l => l.startsWith("data: "));
+        if(!line) continue;
+        try { onEvent(JSON.parse(line.slice(6))); } catch(_){}
+      }
+    }
+  } catch(err){
+    faulted = true;
     const b = say("fault","msg-ai"); b.style.color="var(--fault)";
-    b.textContent = (data && data.error) || "no response from server";
-    return;
-  }
-  const box = say(`lag · ${data.model || S.model}`, "msg-ai");
-  for(const p of paras(data.answer || "(empty answer)")){
-    const n = el("p"); box.appendChild(n); await typeInto(n, p);
+    b.textContent = String(err.message || err);
+  } finally {
+    Tps.stop();
+    th.kill();
+    if(answer){ const c = answer.querySelector(".cursor"); if(c) c.remove(); }
+    if(curStage) setUnit(curStage, "done");
+    if(!box && !faulted){ const b = say("lag","msg-ai"); b.textContent = "(empty answer)"; }
+    scroll();
   }
 }
+
+/* Click a unit in the roster to hand that one agent a small task. A single-stage
+   pipeline with plan off — no new endpoint, no orchestrator, no reload of anything
+   else. Esc or an empty submit cancels. */
+function askAgent(name, model){
+  const u = unitOf(name); if(!u || u.querySelector(".asktask")) return;
+  const wrap = el("div","asktask");
+  wrap.innerHTML = `<input class="askin" placeholder="task for ${name} …" aria-label="Task for ${name}">`;
+  u.querySelector(".utask").after(wrap);
+  const input = wrap.querySelector(".askin");
+  input.focus();
+  const close = () => wrap.remove();
+  input.addEventListener("keydown", ev => {
+    ev.stopPropagation();
+    if(ev.key === "Escape"){ close(); return; }
+    if(ev.key !== "Enter") return;
+    const q = input.value.trim();
+    close();
+    if(!q) return;
+    clearEmpty();
+    say(`you → ${name}`, "msg-me").textContent = q;
+    realTurn(q, "pipeline", {agents: name, plan: false});
+  });
+  input.addEventListener("blur", close);
+}
+roster.addEventListener("click", ev => {
+  const u = ev.target.closest(".unit"); if(!u) return;
+  askAgent(u.dataset.name, u.querySelector(".tag.model")?.textContent || "");
+});
 
 /* pull real system state in and correct the mockup's placeholder labels */
 async function loadState(){
@@ -1005,9 +1541,16 @@ async function loadState(){
     const st = await res.json();
     if(st.chat_model){
       S.model = st.chat_model;
-      const mm = $("#m-model"); if(mm) mm.textContent = st.chat_model;
-      $$(".tag.model").forEach(t => t.textContent = st.chat_model);
+      fillModels(st);
     }
+    // Each persona has its OWN model — most sit on the worker tag, not the
+    // orchestrator's. This used to overwrite every roster tag with chat_model, so all
+    // nine units claimed to be running the orchestrator.
+    (st.personas || []).forEach(pn => {
+      const u = unitOf(pn.name);
+      const tag = u && u.querySelector(".tag.model");
+      if(tag && pn.model) tag.textContent = pn.model;
+    });
     const empty = $(".empty");
     if(empty && st.chat_model){
       const nt = (st.tools||[]).length + (st.rag_tools||[]).length;
@@ -1033,7 +1576,7 @@ async function execute(){
   u.textContent = q;
 
   try{
-    await realTurn(q, S.swarm);
+    await realTurn(q, S.pipeline);
   }catch(err){
     const b = say("fault","msg-ai"); b.style.color="var(--fault)"; b.textContent = String(err);
   }
@@ -1044,15 +1587,15 @@ async function execute(){
   $("#input").focus({preventScroll:true});
 }
 
-/* ══ swarm row ══════════════════════════════════════════════════════════ */
+/* ══ pipeline row ══════════════════════════════════════════════════════════ */
 $$(".mode").forEach(b => b.addEventListener("click", () => {
   if(S.running) return;
   const was = b.getAttribute("aria-pressed") === "true";
   $$(".mode").forEach(x => x.setAttribute("aria-pressed","false"));
-  if(!was){ b.setAttribute("aria-pressed","true"); S.swarm = b.dataset.mode; }
-  else S.swarm = null;
-  $("#swarm-state").textContent = S.swarm || "off";
-  $("#swarm-state").style.color = S.swarm ? "var(--p)" : "var(--ink-3)";
+  if(!was){ b.setAttribute("aria-pressed","true"); S.pipeline = b.dataset.mode; }
+  else S.pipeline = null;
+  $("#pipeline-state").textContent = S.pipeline || "off";
+  $("#pipeline-state").style.color = S.pipeline ? "var(--p)" : "var(--ink-3)";
 }));
 $("#exec").addEventListener("click", execute);
 $("#input").addEventListener("keydown", e => { if(e.key === "Enter") execute(); });
@@ -1060,8 +1603,8 @@ $("#input").addEventListener("focus", () => $("#promptwrap").classList.add("focu
 $("#input").addEventListener("blur",  () => $("#promptwrap").classList.remove("focus"));
 
 /* ══ WIZARD ═════════════════════════════════════════════════════════════ */
-const W = { step:0, orch:"auto", model:"ministral-3:8b", swarm:true, modes:new Set(["crew"]), assign:new Map() };
-const STEP_NAMES = ["brief","orchestration","model","swarm","assign","review"];
+const W = { step:0, orch:"auto", model:"loading…", pipeline:true, modes:new Set(["pipeline"]), assign:new Map() };
+const STEP_NAMES = ["brief","orchestration","model","pipeline","assign","review"];
 
 // model picks
 const mp = $("#model-picks");
@@ -1103,24 +1646,26 @@ AGENTS.forEach(a => {
   asg.appendChild(r);
 });
 
-// orchestration + swarm picks
+// orchestration + pipeline picks
 $$("[data-orch]").forEach(b => b.addEventListener("click", () => {
   $$("[data-orch]").forEach(x => x.setAttribute("aria-pressed","false"));
   b.setAttribute("aria-pressed","true"); W.orch = b.dataset.orch;
   buildNav();
 }));
-$("#sw-swarm").addEventListener("click", () => {
-  W.swarm = !W.swarm;
-  $("#sw-swarm").setAttribute("aria-pressed", String(W.swarm));
-  $("#swarm-picks").style.opacity = W.swarm ? "1" : ".35";
-  $("#swarm-picks").style.pointerEvents = W.swarm ? "auto" : "none";
+$("#sw-pipeline").addEventListener("click", () => {
+  W.pipeline = !W.pipeline;
+  $("#sw-pipeline").setAttribute("aria-pressed", String(W.pipeline));
+  $("#pipeline-picks").style.opacity = W.pipeline ? "1" : ".35";
+  $("#pipeline-picks").style.pointerEvents = W.pipeline ? "auto" : "none";
 });
 $$("[data-sm]").forEach(b => b.addEventListener("click", () => {
-  const m = b.dataset.sm, on = b.getAttribute("aria-pressed") === "true";
-  if(on && W.modes.size === 1) return;         // keep at least one
-  b.setAttribute("aria-pressed", String(!on));
-  on ? W.modes.delete(m) : W.modes.add(m);
+  // Exclusive, not additive: the lead either briefs the stages or it doesn't. These
+  // used to be swarm modes that could stack, which is why the old handler was a Set.
+  $$("[data-sm]").forEach(o => o.setAttribute("aria-pressed", String(o === b)));
+  W.modes = new Set([b.dataset.sm]);
 }));
+
+const planLabel = m => m === "no-plan" ? "straight through" : "plan first";
 
 function buildNav(){
   const nav = $("#wiz-nav"); nav.innerHTML = "";
@@ -1135,7 +1680,7 @@ function buildNav(){
 }
 function summarise(){
   const modes = [...W.modes];
-  const crew = W.orch === "manual"
+  const stages = W.orch === "manual"
     ? [...W.assign.keys()]
     : ["architect_agent","dev_agent","senior_dev_agent"];
   $("#summary").innerHTML =
@@ -1145,10 +1690,10 @@ function summarise(){
         ? "<b>Orchestrated</b> — architect_agent delegates and synthesises"
         : "<b>Manual</b> — orchestrator off, you assigned the work"}</span></div>
      <div class="srow"><span class="sk">model</span><span class="sv"><b>${W.model}</b></span></div>
-     <div class="srow"><span class="sk">swarm</span><span class="sv">${W.swarm
-        ? "<b>" + modes.join(" → ") + "</b>" + (modes.length>1 ? " · run in sequence" : "")
+     <div class="srow"><span class="sk">pipeline</span><span class="sv">${W.pipeline
+        ? "<b>" + planLabel(modes[0]) + "</b> · stages run in order, each seeing the context above it"
         : "off — a single agent takes the whole brief"}</span></div>
-     <div class="srow"><span class="sk">agents</span><span class="sv">${crew.length ? crew.join(", ") : "<span style='color:var(--amber)'>none assigned yet</span>"}</span></div>
+     <div class="srow"><span class="sk">agents</span><span class="sv">${stages.length ? stages.join(", ") : "<span style='color:var(--amber)'>none assigned yet</span>"}</span></div>
      <div class="srow"><span class="sk">always on</span><span class="sv">retrieval · mcp · 8 tools</span></div>`;
 }
 function showStep(i){
@@ -1189,7 +1734,7 @@ function launch(){
   const obj  = $("#p-obj").value.trim();
   const modes = [...W.modes];
   S.project = {
-    name, obj, orch:W.orch, model:W.model, swarm:W.swarm, modes,
+    name, obj, orch:W.orch, model:W.model, pipeline:W.pipeline, modes,
     assign: [...W.assign.entries()].map(([n,t]) => ({n, t})),
   };
   S.model = W.model;
@@ -1204,17 +1749,17 @@ function launch(){
     });
   }
 
-  // engage the first selected swarm mode in the command row
-  S.swarm = W.swarm ? modes[0] : null;
-  $$(".mode").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.mode === S.swarm)));
-  $("#swarm-state").textContent = S.swarm || "off";
-  $("#swarm-state").style.color = S.swarm ? "var(--p)" : "var(--ink-3)";
+  // engage the first selected pipeline mode in the command row
+  S.pipeline = W.pipeline ? modes[0] : null;
+  $$(".mode").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.mode === S.pipeline)));
+  $("#pipeline-state").textContent = S.pipeline || "off";
+  $("#pipeline-state").style.color = S.pipeline ? "var(--p)" : "var(--ink-3)";
 
   $("#projchip").classList.add("on");
   $("#chip-name").textContent = name;
   $("#chip-meta").textContent =
     `${W.orch === "auto" ? "orchestrated" : "manual"} · ${W.model}` +
-    (W.swarm ? ` · ${modes.join("→")}` : " · solo");
+    (W.pipeline ? ` · ${planLabel(modes[0])}` : " · solo");
 
   closeWiz();
   clearEmpty();
@@ -1223,7 +1768,7 @@ function launch(){
     `<p><strong>${esc(name)}</strong> is live — ${W.orch === "auto"
       ? "architect_agent will decompose the brief and delegate."
       : "orchestrator off; " + S.project.assign.length + " agents hold their own instructions."}
-     ${W.swarm ? "Swarm running <strong>" + modes.join(" → ") + "</strong>." : "Running as a single agent."}
+     ${W.pipeline ? "Running as a pipeline — <strong>" + planLabel(modes[0]) + "</strong>." : "Running as a single agent."}
      Retrieval and MCP are active as always.</p>
      <p>Send a message to start, or restate the objective to kick it off.</p>`;
   if(obj) $("#input").value = obj;
