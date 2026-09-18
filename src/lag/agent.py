@@ -25,16 +25,36 @@ from __future__ import annotations
 
 import datetime
 import json
+import re
 import time
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
+
+import yaml
 
 from . import tools as tools_mod
 from .config import load_persona
 from .ollama_client import OllamaClient
 from .tools import LocalToolProvider
 
-AGENT_DIR = Path("agent")
+# Definitions and run state live together, paired by name, because they are always
+# read together and two near-identical directories (agent/ vs agents/) would be a
+# standing trap. The definition is yours to keep and commit; the state is per-machine
+# and gitignored.
+#     agents/<name>.yaml         what the agent IS
+#     agents/<name>.state.json   what it has DONE
+#     agents/<name>.stop         a request to stop
+AGENT_DIR = Path("agents")
+
+_SAFE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+
+
+def _check_name(name: str) -> str:
+    """Names become file paths, so refuse anything that could escape the directory."""
+    if not _SAFE_NAME.match(name or ""):
+        raise ValueError(
+            f"invalid agent name {name!r}: use letters, digits, dot, dash, underscore")
+    return name
 
 
 @dataclass
@@ -53,6 +73,63 @@ class GoalSpec:
     # and another at cycle 400 is a healthy agent; five in a row is a broken one.
     max_failures: int = 5        # consecutive cycles that raised
     max_idle: int = 5            # consecutive cycles that did nothing at all
+    # A saved agent is a thing you own: it can be switched off without being deleted,
+    # and it carries its own note about what it is for.
+    enabled: bool = True
+    description: str = ""
+    mcp: bool = True
+    # Allow-list of tool names. EMPTY MEANS EVERY TOOL — the default decides nothing,
+    # so narrowing is always a deliberate act rather than something inherited from a
+    # template. An unknown name here is a typo that would silently remove a tool, so
+    # it is reported rather than ignored.
+    tools: list[str] = field(default_factory=list)
+
+    # ── persistence ──────────────────────────────────────────────────────────
+    @classmethod
+    def path_for(cls, name: str) -> Path:
+        return AGENT_DIR / f"{_check_name(name)}.yaml"
+
+    def save(self) -> Path:
+        """Write the definition as YAML — human-editable and diffable, like personas."""
+        p = self.path_for(self.name)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(yaml.safe_dump(asdict(self), sort_keys=False, width=100))
+        return p
+
+    @classmethod
+    def load(cls, name: str) -> "GoalSpec":
+        p = cls.path_for(name)
+        if not p.exists():
+            raise FileNotFoundError(f"no agent named {name!r} (looked in {p})")
+        raw = yaml.safe_load(p.read_text()) or {}
+        known = {f.name for f in fields(cls)}
+        # Ignore unknown keys rather than exploding: these files are hand-edited, and a
+        # stray field should not make an agent unloadable.
+        return cls(**{k: v for k, v in raw.items() if k in known})
+
+    @classmethod
+    def list_all(cls) -> list["GoalSpec"]:
+        if not AGENT_DIR.is_dir():
+            return []
+        out = []
+        for f in sorted(AGENT_DIR.glob("*.yaml")):
+            try:
+                out.append(cls.load(f.stem))
+            except Exception:  # noqa: BLE001 - one broken file must not hide the rest
+                continue
+        return out
+
+    def delete(self) -> None:
+        """Remove the definition and everything the run left behind."""
+        for f in (self.path_for(self.name),
+                  AGENT_DIR / f"{self.name}.state.json",
+                  AGENT_DIR / f"{self.name}.stop"):
+            f.unlink(missing_ok=True)
+
+    def unknown_tools(self) -> list[str]:
+        """Names in `tools` that do not exist — a typo silently removes a tool."""
+        return [t for t in self.tools if t not in tools_mod.TOOLS
+                and t != "search_knowledge_base"]
 
     def prompt(self, cycle: int, notes: list[str], last: str = "") -> str:
         """The per-cycle brief.
@@ -100,7 +177,7 @@ class AgentState:
 
     @property
     def path(self) -> Path:
-        return AGENT_DIR / f"{self.spec.get('name', 'default')}.json"
+        return AGENT_DIR / f"{self.spec.get('name', 'default')}.state.json"
 
     def save(self) -> None:
         self.updated = datetime.datetime.now().astimezone().isoformat(timespec="seconds")
@@ -109,13 +186,84 @@ class AgentState:
 
     @classmethod
     def load(cls, name: str) -> "AgentState | None":
-        f = AGENT_DIR / f"{name}.json"
+        f = AGENT_DIR / f"{name}.state.json"
         if not f.exists():
             return None
         try:
             return cls(**json.loads(f.read_text()))
         except Exception:  # noqa: BLE001 - a corrupt state file must not block a run
             return None
+
+
+def _schema_name(schema) -> str:
+    """The tool name out of either provider's schema shape.
+
+    LocalToolProvider hands back the function objects themselves; MCPToolProvider hands
+    back Ollama-shaped dicts. Both satisfy the same interface, so anything filtering
+    them has to read both — the alternative is a filter that works over one transport
+    and silently passes everything over the other.
+    """
+    if callable(schema):
+        return getattr(schema, "__name__", "")
+    if isinstance(schema, dict):
+        return (schema.get("function") or {}).get("name") or schema.get("name") or ""
+    return ""
+
+
+# The goal tools are the loop's CONTROL PLANE, not ordinary tools. mark_done decides
+# whether the run continues and note_progress is how one cycle talks to the next, so
+# both must mutate state in *this* process. Over MCP every tool executes in a separate
+# server process, where a mutation is invisible here — which is exactly what happened:
+# an agent called mark_done on cycle 1 and kept running to its cycle cap, reporting
+# zero notes, because the record it wrote lived in a subprocess that then exited.
+GOAL_TOOLS = ("mark_done", "note_progress", "goal_status")
+
+
+class GoalToolsLocal:
+    """Keep the goal tools in-process, whatever transport the rest of them use.
+
+    Schemas still come from the inner provider, so the model sees one consistent
+    toolset and the MCP server needs no special case — only the dispatch is diverted.
+    """
+
+    def __init__(self, inner):
+        self.inner = inner
+
+    def schemas(self):
+        return self.inner.schemas()
+
+    def call(self, name: str, args: dict) -> str:
+        if name in GOAL_TOOLS:
+            try:
+                return str(getattr(tools_mod, name)(**(args or {})))
+            except Exception as e:  # noqa: BLE001 - tools report, never raise
+                return f"{name} error: {type(e).__name__}: {e}"
+        return self.inner.call(name, args)
+
+
+class ToolSubset:
+    """A tool_provider narrowed to an allow-list.
+
+    Wraps rather than replaces, so it works over direct dispatch and MCP alike and the
+    agent loop cannot tell the difference — the same duck-typing rule the providers
+    themselves follow. A blocked call returns a string the model can read and adapt to,
+    never an exception, matching how every other tool failure behaves.
+    """
+
+    def __init__(self, inner, allow: list[str]):
+        self.inner = inner
+        self.allow = set(allow)
+
+    def schemas(self):
+        if not self.allow:
+            return self.inner.schemas()
+        return [s for s in self.inner.schemas() if _schema_name(s) in self.allow]
+
+    def call(self, name: str, args: dict) -> str:
+        if self.allow and name not in self.allow:
+            return (f"blocked: {name} is not in this agent's allowed tools "
+                    f"({', '.join(sorted(self.allow))})")
+        return self.inner.call(name, args)
 
 
 def stop_path(name: str) -> Path:
@@ -127,7 +275,13 @@ class AgentLoop:
     def __init__(self, spec: GoalSpec, cfg: dict, tool_provider=None):
         self.spec = spec
         self.cfg = cfg
-        self.provider = tool_provider or LocalToolProvider()
+        provider = tool_provider or LocalToolProvider()
+        # Empty allow-list means every tool, so an agent with no `tools:` set is
+        # unrestricted and the wrapper is skipped entirely.
+        if spec.tools:
+            provider = ToolSubset(provider, spec.tools)
+        # Outermost, so the control plane survives both the allow-list and MCP.
+        self.provider = GoalToolsLocal(provider)
         persona = load_persona(spec.persona, cfg)
         self.model = spec.model or persona["model"]
         self.client = OllamaClient.from_config(

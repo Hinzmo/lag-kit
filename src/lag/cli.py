@@ -103,6 +103,7 @@ def _ask(label: str, default: str = "") -> str:
 
 @agent_app.command("start")
 def agent_start(
+    saved: str = typer.Argument(None, help="Name of a saved agent to run. Omit to define one."),
     goal: str = typer.Option(None, help="What the agent should achieve. Omit for the wizard."),
     success: str = typer.Option("", help="What done looks like."),
     constraints: str = typer.Option("", help="What it must not do."),
@@ -124,6 +125,20 @@ def agent_start(
 
     cfg = load_config()
 
+    # A saved agent is run as-is: its definition already holds every answer the wizard
+    # would ask for, and re-asking would quietly let the saved copy drift.
+    if saved:
+        try:
+            spec = GoalSpec.load(saved)
+        except (FileNotFoundError, ValueError) as e:
+            typer.echo(f"  {e}")
+            raise typer.Exit(1) from None
+        if not spec.enabled:
+            typer.echo(f"  agent {saved!r} is disabled — enable it with: "
+                       f"lag agent enable {saved}")
+            raise typer.Exit(1)
+        return _run_spec(spec, cfg, mcp=spec.mcp)
+
     if not goal:
         typer.echo("\n  agent mode — set the goal\n")
         goal = _ask("goal (required)")
@@ -140,7 +155,13 @@ def agent_start(
     spec = GoalSpec(goal=goal, success=success, constraints=constraints,
                     persona=persona, interval=interval,
                     max_cycles=max_cycles or None, name=name,
-                    max_failures=max_failures, max_idle=max_idle)
+                    max_failures=max_failures, max_idle=max_idle, mcp=mcp)
+    return _run_spec(spec, cfg, mcp=mcp)
+
+
+def _run_spec(spec, cfg, mcp: bool):
+    """Print the brief, then drive the loop. Shared by ad-hoc and saved runs."""
+    from .agent import AgentLoop, stop_path
 
     typer.echo(f"\n  goal      : {spec.goal}")
     typer.echo(f"  done when : {spec.success or '(agent decides)'}")
@@ -150,8 +171,14 @@ def agent_start(
     typer.echo(f"  cap       : {spec.max_cycles or 'until done or stopped'}")
     typer.echo(f"  breakers  : {spec.max_failures or 'off'} consecutive failures · "
                f"{spec.max_idle or 'off'} idle cycles")
+    typer.echo(f"  tools     : {', '.join(spec.tools) if spec.tools else 'all (unrestricted)'}")
     typer.echo(f"  autonomy  : FULL — unsandboxed shell and filesystem")
     typer.echo(f"  stop with : lag agent stop {spec.name}   (or touch {stop_path(spec.name)})\n")
+
+    unknown = spec.unknown_tools()
+    if unknown:
+        # A typo here silently removes a tool, which looks like a dumb model later.
+        typer.echo(f"  ! unknown tools in this agent: {', '.join(unknown)}")
 
     provider = None
     if mcp:
@@ -177,6 +204,125 @@ def agent_start(
     state = AgentLoop(spec, cfg, provider).run(on_event=show)
     typer.echo(f"\n[agent] {state.cycle} cycle(s) · {len(state.notes)} note(s) · "
                f"{state.errors} error(s) · state: {state.path}")
+
+
+@agent_app.command("new")
+def agent_new(
+    name: str = typer.Argument(..., help="Name for the saved agent."),
+    tools: str = typer.Option("", help="Comma-separated tool allow-list. Empty = every tool."),
+):
+    """Define a saved agent you can run, disable, and edit later."""
+    from .agent import GoalSpec
+
+    typer.echo(f"\n  defining agent {name!r}\n")
+    goal = _ask("goal (required)")
+    if not goal:
+        typer.echo("  no goal given; nothing saved.")
+        raise typer.Exit(1)
+    spec = GoalSpec(
+        name=name,
+        goal=goal,
+        description=_ask("description"),
+        success=_ask("done when"),
+        constraints=_ask("must not"),
+        persona=_ask("persona", "dev_agent"),
+        model=_ask("model override (blank = the persona's)", ""),
+        interval=int(_ask("seconds between cycles", "0") or 0),
+        max_cycles=int(_ask("max cycles (0 = until done)", "0") or 0) or None,
+        max_failures=int(_ask("stop after N consecutive failures", "5") or 5),
+        max_idle=int(_ask("stop after N idle cycles", "5") or 5),
+        tools=[t.strip() for t in tools.split(",") if t.strip()],
+    )
+    unknown = spec.unknown_tools()
+    if unknown:
+        typer.echo(f"  ! unknown tools: {', '.join(unknown)} — saved anyway, fix the file")
+    path = spec.save()
+    typer.echo(f"\n  saved to {path}")
+    typer.echo(f"  run it with: lag agent start {name}")
+
+
+@agent_app.command("list")
+def agent_list():
+    """List saved agents and whether each is on."""
+    from .agent import AgentState, GoalSpec
+
+    specs = GoalSpec.list_all()
+    if not specs:
+        typer.echo("no saved agents — define one with: lag agent new <name>")
+        return
+    for sp in specs:
+        st = AgentState.load(sp.name)
+        where = ""
+        if st:
+            where = f" · cycle {st.cycle}" + (" · DONE" if st.done else "")
+            if st.stopped_reason:
+                where += f" · stopped: {st.stopped_reason}"
+        flag = "on " if sp.enabled else "off"
+        typer.echo(f"  [{flag}] {sp.name:18} {sp.persona:18}{where}")
+        typer.echo(f"         {sp.description or sp.goal[:80]}")
+
+
+@agent_app.command("show")
+def agent_show(name: str = typer.Argument(..., help="Saved agent name.")):
+    """Print a saved agent's full definition."""
+    from .agent import GoalSpec
+
+    try:
+        sp = GoalSpec.load(name)
+    except (FileNotFoundError, ValueError) as e:
+        typer.echo(f"  {e}")
+        raise typer.Exit(1) from None
+    for k, v in vars(sp).items():
+        typer.echo(f"  {k:14}: {v if v not in ([], '') else '(unset)'}")
+    typer.echo(f"  file          : {GoalSpec.path_for(name)}")
+
+
+def _set_enabled(name: str, on: bool):
+    from .agent import GoalSpec
+
+    try:
+        sp = GoalSpec.load(name)
+    except (FileNotFoundError, ValueError) as e:
+        typer.echo(f"  {e}")
+        raise typer.Exit(1) from None
+    sp.enabled = on
+    sp.save()
+    typer.echo(f"  {name} is now {'enabled' if on else 'disabled'}")
+
+
+@agent_app.command("enable")
+def agent_enable(name: str = typer.Argument(..., help="Saved agent name.")):
+    """Turn a saved agent on."""
+    _set_enabled(name, True)
+
+
+@agent_app.command("disable")
+def agent_disable(name: str = typer.Argument(..., help="Saved agent name.")):
+    """Turn a saved agent off without deleting it."""
+    _set_enabled(name, False)
+
+
+@agent_app.command("delete")
+def agent_delete(
+    name: str = typer.Argument(..., help="Saved agent name."),
+    yes: bool = typer.Option(False, "--yes", help="Skip the confirmation."),
+):
+    """Delete a saved agent, its run state, and its stop flag."""
+    from .agent import GoalSpec
+
+    try:
+        sp = GoalSpec.load(name)
+    except (FileNotFoundError, ValueError) as e:
+        typer.echo(f"  {e}")
+        raise typer.Exit(1) from None
+    if not yes:
+        typer.echo(f"  about to delete {name!r} and its run history:")
+        typer.echo(f"    {sp.goal[:100]}")
+        if _ask("type the name to confirm") != name:
+            typer.echo("  cancelled.")
+            raise typer.Exit(1)
+    sp.delete()
+    typer.echo(f"  deleted {name}")
 
 
 @agent_app.command("status")

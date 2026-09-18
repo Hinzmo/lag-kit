@@ -11,6 +11,8 @@ site, not a rewrite of the loop.
 from __future__ import annotations
 import ollama
 
+from .render import StreamCleaner, clean_text, format_call, humanise
+
 # Ollama reports what each tag can actually do, so capability is discovered, never a
 # hardcoded list that rots the moment someone pulls a new model. Cached per process:
 # a model's capabilities cannot change while it is installed, and show() is a round
@@ -146,6 +148,10 @@ class OllamaClient:
             return self._chat(model=self.model, messages=messages, tools=schemas).message
 
         content, thinking, tool_calls, final = [], [], [], None
+        # Cleaned for display only. `content` keeps the raw text, because that is what
+        # goes back into `messages` — rewriting the model's own turn mid-conversation
+        # is a different and much riskier thing than tidying what a human reads.
+        shown = StreamCleaner()
         for chunk in self._chat(model=self.model, messages=messages, tools=schemas,
                                 stream=True):
             final = chunk.message
@@ -156,9 +162,15 @@ class OllamaClient:
                 on_event({"type": "thinking", "text": final.thinking})
             if final.content:
                 content.append(final.content)
-                on_event({"type": "token", "text": final.content})
+                visible = shown.feed(final.content)
+                if visible:
+                    on_event({"type": "token", "text": visible})
             if final.tool_calls:
                 tool_calls.extend(final.tool_calls)
+
+        tail = shown.flush()
+        if tail:
+            on_event({"type": "token", "text": tail})
 
         # Rebuild the turn the loop expects. ollama's chunks carry deltas, so the last
         # chunk alone would drop everything streamed before it.
@@ -220,7 +232,9 @@ class OllamaClient:
             messages.append(msg)  # the assistant turn, possibly carrying tool_calls
 
             if not msg.tool_calls:
-                return msg.content or ""
+                # Clean the ANSWER — it is both what the user reads and what the next
+                # pipeline stage inherits, and leaked tool JSON is noise in either.
+                return clean_text(msg.content or "")
 
             for call in msg.tool_calls:
                 name = call.function.name
@@ -230,11 +244,15 @@ class OllamaClient:
                 if verbose and on_event is None:
                     print(f"  \u21b3 {name}({args})")
                 if on_event:
-                    on_event({"type": "tool", "name": name, "args": args})
+                    # `pretty` is what every consumer displays; `args` stays for anything
+                    # that needs the structure. Formatting here rather than in each view
+                    # is why the activity window cannot drift back to raw JSON.
+                    on_event({"type": "tool", "name": name, "args": args,
+                              "pretty": format_call(name, args)})
                 result = tool_provider.call(name, args)
                 if on_event:
                     on_event({"type": "tool_result", "name": name,
-                              "content": str(result)[:2000]})
+                              "content": humanise(str(result), 2000)})
                 messages.append({"role": "tool", "tool_name": name, "content": str(result)})
 
         return "(stopped: hit max_iters without a final answer)"

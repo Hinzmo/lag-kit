@@ -301,7 +301,11 @@ def stream(req: RunRequest):
 
 
 class AgentRequest(BaseModel):
-    goal: str
+    # Either run a SAVED agent by name, or describe an ad-hoc one inline. A saved
+    # agent is run exactly as defined — re-reading fields from the request would let
+    # the running copy drift from the saved one.
+    saved: str | None = None
+    goal: str = ""
     success: str = ""
     constraints: str = ""
     persona: str = "dev_agent"
@@ -332,23 +336,30 @@ def agent_start(req: AgentRequest):
     cfg = load_config()
     events: queue.Queue = queue.Queue()
 
-    if req.name in _RUNNING:
-        return {"error": f"agent {req.name!r} is already running — stop it first"}
+    run_name = req.saved or req.name
+    if run_name in _RUNNING:
+        return {"error": f"agent {run_name!r} is already running — stop it first"}
 
     def work() -> None:
-        _RUNNING.add(req.name)
+        _RUNNING.add(run_name)
         try:
-            spec = GoalSpec(goal=req.goal, success=req.success,
-                            constraints=req.constraints, persona=req.persona,
-                            interval=req.interval,
-                            max_cycles=req.max_cycles or None, name=req.name,
-                            model=req.model or "",
-                            max_failures=req.max_failures, max_idle=req.max_idle)
-            AgentLoop(spec, cfg, _provider(cfg, req.mcp)).run(on_event=events.put)
+            if req.saved:
+                spec = GoalSpec.load(req.saved)
+                if not spec.enabled:
+                    raise ValueError(f"agent {req.saved!r} is disabled")
+            else:
+                spec = GoalSpec(goal=req.goal, success=req.success,
+                                constraints=req.constraints, persona=req.persona,
+                                interval=req.interval,
+                                max_cycles=req.max_cycles or None, name=req.name,
+                                model=req.model or "",
+                                max_failures=req.max_failures, max_idle=req.max_idle)
+            AgentLoop(spec, cfg, _provider(cfg, spec.mcp if req.saved else req.mcp)
+                      ).run(on_event=events.put)
         except Exception as e:  # noqa: BLE001 - surface to the UI, never 500
             events.put({"type": "error", "message": f"{type(e).__name__}: {e}"})
         finally:
-            _RUNNING.discard(req.name)
+            _RUNNING.discard(run_name)
             events.put(_DONE)
 
     threading.Thread(target=work, daemon=True).start()
@@ -384,3 +395,88 @@ def agent_stop(name: str = "default"):
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text("stop")
     return {"stopping": True, "name": name, "stop_file": str(p)}
+
+
+class AgentDef(BaseModel):
+    """A saved agent's definition, as the console edits it."""
+
+    name: str
+    goal: str
+    description: str = ""
+    success: str = ""
+    constraints: str = ""
+    persona: str = "dev_agent"
+    model: str = ""
+    interval: int = 0
+    max_cycles: int | None = None
+    max_failures: int = 5
+    max_idle: int = 5
+    enabled: bool = True
+    mcp: bool = True
+    tools: list[str] = []
+
+
+def _spec_row(sp, running: bool) -> dict:
+    """A definition plus whatever its last run left behind — the console shows both."""
+    from .agent import AgentState
+
+    st = AgentState.load(sp.name)
+    row = {**{k: getattr(sp, k) for k in AgentDef.model_fields},
+           "running": running, "unknown_tools": sp.unknown_tools()}
+    row["state"] = None if not st else {
+        "cycle": st.cycle, "done": st.done, "summary": st.summary,
+        "errors": st.errors, "notes": st.notes[-10:],
+        "stopped_reason": st.stopped_reason, "updated": st.updated,
+    }
+    return row
+
+
+@app.get("/api/agents")
+def agents_list():
+    """Every saved agent, with its last run's outcome."""
+    from .agent import GoalSpec
+
+    return {"agents": [_spec_row(sp, sp.name in _RUNNING) for sp in GoalSpec.list_all()]}
+
+
+@app.post("/api/agents")
+def agents_save(d: AgentDef):
+    """Create or update a saved agent. Editing never touches its run history."""
+    from .agent import GoalSpec
+
+    try:
+        spec = GoalSpec(**d.model_dump())
+        path = spec.save()
+    except (ValueError, OSError) as e:
+        return {"error": f"{type(e).__name__}: {e}"}
+    return {"saved": spec.name, "path": str(path),
+            "unknown_tools": spec.unknown_tools()}
+
+
+@app.post("/api/agents/{name}/enabled")
+def agents_set_enabled(name: str, on: bool = True):
+    """Turn a saved agent on or off without deleting it."""
+    from .agent import GoalSpec
+
+    try:
+        spec = GoalSpec.load(name)
+    except (FileNotFoundError, ValueError) as e:
+        return {"error": str(e)}
+    spec.enabled = on
+    spec.save()
+    return {"name": name, "enabled": on}
+
+
+@app.delete("/api/agents/{name}")
+def agents_delete(name: str):
+    """Delete a saved agent, its run state, and its stop flag."""
+    from .agent import GoalSpec
+
+    try:
+        spec = GoalSpec.load(name)
+    except (FileNotFoundError, ValueError) as e:
+        return {"error": str(e)}
+    if name in _RUNNING:
+        return {"error": f"{name} is running — stop it first"}
+    spec.delete()
+    return {"deleted": name}

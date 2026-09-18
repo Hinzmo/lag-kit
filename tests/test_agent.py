@@ -306,3 +306,154 @@ def test_a_crashing_agent_reports_crashing_not_idleness(monkeypatch, _isolate):
     assert "consecutive failed cycles" in state.stopped_reason
     assert "no tool call" not in state.stopped_reason
     assert state.cycle == 5                 # the failure breaker, not the idle one
+
+
+class TestSavedDefinitions:
+    """A saved agent is a thing you own: editable, toggleable, and separate from its
+    history. Definition and run state are deliberately different files — editing a
+    goal must not erase what the agent has already done."""
+
+    def test_round_trips_through_yaml(self):
+        spec = GoalSpec(name="auditor", goal="audit things", persona="dev_agent",
+                        interval=30, tools=["read_file"], description="reads stuff")
+        spec.save()
+        back = GoalSpec.load("auditor")
+        assert back.goal == "audit things"
+        assert back.tools == ["read_file"]
+        assert back.interval == 30
+        assert back.description == "reads stuff"
+
+    def test_definitions_are_human_editable_yaml(self):
+        GoalSpec(name="a", goal="g").save()
+        text = GoalSpec.path_for("a").read_text()
+        assert "goal: g" in text          # not a pickle or an opaque blob
+
+    def test_listing_skips_a_broken_file_instead_of_hiding_the_rest(self):
+        GoalSpec(name="good", goal="g").save()
+        (agent_mod.AGENT_DIR / "broken.yaml").write_text("{[not yaml")
+        assert [s.name for s in GoalSpec.list_all()] == ["good"]
+
+    def test_unknown_keys_are_ignored_so_hand_edits_do_not_brick_an_agent(self):
+        GoalSpec(name="a", goal="g").save()
+        p = GoalSpec.path_for("a")
+        p.write_text(p.read_text() + "\nfavourite_colour: blue\n")
+        assert GoalSpec.load("a").goal == "g"
+
+    def test_disabling_keeps_the_definition(self):
+        GoalSpec(name="a", goal="g").save()
+        sp = GoalSpec.load("a"); sp.enabled = False; sp.save()
+        assert GoalSpec.load("a").enabled is False
+        assert GoalSpec.path_for("a").exists()
+
+    def test_editing_a_goal_does_not_touch_run_history(self):
+        spec = GoalSpec(name="a", goal="original"); spec.save()
+        st = agent_mod.AgentState(spec={"name": "a"}, cycle=7, notes=["did a thing"])
+        st.save()
+        spec.goal = "revised"; spec.save()
+        assert agent_mod.AgentState.load("a").cycle == 7
+
+    def test_delete_removes_definition_state_and_stop_flag(self):
+        spec = GoalSpec(name="a", goal="g"); spec.save()
+        agent_mod.AgentState(spec={"name": "a"}, cycle=1).save()
+        stop_path("a").write_text("stop")
+        spec.delete()
+        assert not GoalSpec.path_for("a").exists()
+        assert not (agent_mod.AGENT_DIR / "a.state.json").exists()
+        assert not stop_path("a").exists()
+
+    def test_a_name_cannot_escape_the_directory(self):
+        """Names become file paths."""
+        for bad in ("../../etc/passwd", "a/b", "", ".hidden", "with space"):
+            with pytest.raises(ValueError):
+                GoalSpec.path_for(bad)
+
+    def test_missing_agent_is_a_clear_error(self):
+        with pytest.raises(FileNotFoundError):
+            GoalSpec.load("nope")
+
+    def test_unknown_tool_names_are_reported(self):
+        spec = GoalSpec(name="a", goal="g", tools=["read_file", "nosuchtool"])
+        assert spec.unknown_tools() == ["nosuchtool"]
+
+    def test_search_knowledge_base_is_a_known_tool(self):
+        """It comes from the RAG server, not TOOLS, but naming it is not a typo."""
+        assert GoalSpec(name="a", goal="g",
+                        tools=["search_knowledge_base"]).unknown_tools() == []
+
+
+class TestToolSubset:
+    """Narrowing must work identically over both transports, or an allow-list that
+    looks enforced in tests silently passes everything in production."""
+
+    class FakeInner:
+        def __init__(self, schemas): self._s = schemas; self.called = []
+        def schemas(self): return self._s
+        def call(self, name, args): self.called.append(name); return "ran " + name
+
+    def test_filters_callable_schemas_like_the_local_provider(self):
+        def read_file(): pass
+        def run_shell(): pass
+        inner = self.FakeInner([read_file, run_shell])
+        sub = agent_mod.ToolSubset(inner, ["read_file"])
+        assert [f.__name__ for f in sub.schemas()] == ["read_file"]
+
+    def test_filters_dict_schemas_like_the_mcp_provider(self):
+        inner = self.FakeInner([
+            {"type": "function", "function": {"name": "read_file"}},
+            {"type": "function", "function": {"name": "run_shell"}},
+        ])
+        sub = agent_mod.ToolSubset(inner, ["read_file"])
+        assert [agent_mod._schema_name(s) for s in sub.schemas()] == ["read_file"]
+
+    def test_a_blocked_call_returns_a_string_and_never_reaches_the_inner_provider(self):
+        inner = self.FakeInner([])
+        sub = agent_mod.ToolSubset(inner, ["read_file"])
+        out = sub.call("run_shell", {})
+        assert "blocked" in out and "read_file" in out
+        assert inner.called == []
+
+    def test_an_empty_allow_list_means_everything(self):
+        def a(): pass
+        inner = self.FakeInner([a])
+        sub = agent_mod.ToolSubset(inner, [])
+        assert sub.schemas() == [a]
+        assert sub.call("anything", {}) == "ran anything"
+
+
+class TestGoalToolsStayLocal:
+    """The bug this exists for: an agent called mark_done on cycle 1 and ran to its
+    cycle cap anyway, reporting zero notes — over MCP the tools executed in a server
+    subprocess, so the record they wrote died with it."""
+
+    class RemoteInner:
+        def __init__(self): self.called = []
+        def schemas(self): return []
+        def call(self, name, args):
+            self.called.append(name)
+            return "executed in a subprocess, where nothing here can see it"
+
+    def test_mark_done_is_never_routed_to_the_inner_provider(self):
+        inner = self.RemoteInner()
+        p = agent_mod.GoalToolsLocal(inner)
+        tools_mod.GOAL.update({"done": False, "summary": ""})
+        p.call("mark_done", {"summary": "finished"})
+        assert inner.called == []                       # stayed in-process
+        assert tools_mod.GOAL["done"] is True           # and actually took effect
+
+    def test_note_progress_reaches_this_process(self):
+        inner = self.RemoteInner()
+        p = agent_mod.GoalToolsLocal(inner)
+        tools_mod.GOAL["notes"] = []
+        p.call("note_progress", {"note": "did a thing"})
+        assert tools_mod.GOAL["notes"] == ["did a thing"]
+        assert inner.called == []
+
+    def test_ordinary_tools_still_go_to_the_inner_provider(self):
+        inner = self.RemoteInner()
+        p = agent_mod.GoalToolsLocal(inner)
+        p.call("read_file", {"path": "x"})
+        assert inner.called == ["read_file"]
+
+    def test_a_bad_goal_tool_call_reports_rather_than_raising(self):
+        p = agent_mod.GoalToolsLocal(self.RemoteInner())
+        assert "error" in p.call("mark_done", {"wrong_arg": 1})

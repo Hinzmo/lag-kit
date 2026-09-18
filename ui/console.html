@@ -355,6 +355,15 @@ body.novfx .crt{ display:none; }
 .arow{ display:grid; grid-template-columns:1fr 1fr 1fr; gap:var(--s3); }
 .awarn{ border:1px solid var(--amber); padding:var(--s3); margin:0 0 var(--s4);
   font-size:11px; color:var(--amber); line-height:1.5; }
+.srow2{ display:flex; align-items:center; gap:var(--s3); padding:6px 8px;
+  border:1px solid var(--rule); margin-bottom:6px; font-size:11.5px; }
+.srow2 .nm{ color:var(--p); min-width:130px; }
+.srow2 .ds{ color:var(--ink-3); flex:1; overflow:hidden; text-overflow:ellipsis;
+  white-space:nowrap; }
+.srow2 .off{ color:var(--ink-3); }
+.srow2 button{ background:none; border:1px solid var(--rule); color:var(--ink-2);
+  font:inherit; font-size:10px; padding:2px 7px; cursor:pointer; border-radius:2px; }
+.srow2 button:hover{ border-color:var(--p); color:var(--p); }
 .wiz-box{
   width:min(1000px,96vw); height:min(680px,92vh);
   background:var(--panel); border:1px solid var(--p-ghost);
@@ -640,6 +649,19 @@ body.novfx .crt{ display:none; }
         <b>mark_done</b>, when it hits the cycle cap, or when you press <b>stop agent</b>.
       </div>
 
+      <div class="afield" id="aw-saved-wrap" hidden>
+        <label>saved agents</label>
+        <div id="aw-saved"></div>
+      </div>
+
+      <div class="afield">
+        <label for="aw-name">name — saving lets you run this again later</label>
+        <input id="aw-name" placeholder="e.g. nightly-audit  (blank = run once, unsaved)">
+      </div>
+      <div class="afield">
+        <label for="aw-tools">tools — blank means every tool</label>
+        <input id="aw-tools" placeholder="e.g. read_file, find_files, grep_files, note_progress, mark_done">
+      </div>
       <div class="afield">
         <label for="aw-goal">goal — what should it achieve?</label>
         <input id="aw-goal" placeholder="e.g. audit src/ for TODOs and write a report to notes/todo.md">
@@ -672,6 +694,7 @@ body.novfx .crt{ display:none; }
       <span class="hint" id="aw-hint">the goal is the only required field</span>
       <div class="grow">
         <button class="btn" id="aw-cancel">cancel</button>
+        <button class="btn" id="aw-save">save</button>
         <button class="btn go" id="aw-start">start agent</button>
       </div>
     </div>
@@ -878,9 +901,9 @@ const VB = {
     this.out.appendChild(document.createTextNode(text));
     this.scroll();
   },
-  tool(name, args){
+  tool(name, args, pretty){
     const d = this._sec("vb-tool", "tool call");
-    d.insertAdjacentHTML("beforeend", `<b>${name}</b>(${esc(JSON.stringify(args||{}))})`);
+    d.insertAdjacentHTML("beforeend", esc(pretty || `${name}()`));
     this.out = null;            // output after a tool call is a new section
     this.scroll();
   },
@@ -909,6 +932,7 @@ $("#vb-think").addEventListener("click", () => {
 /* Every run funnels through here, so the drawer stays in step with the chat pane
    whichever path produced the events. */
 function vbEvent(e){
+  wireEvent(e);
   if(e.type === "routing")        VB.note("routing", `${e.lead} choosing from ${e.candidates.length} agents…`);
   else if(e.type === "routed")    VB.note("routed", e.agents.map(a=>`${a.name} (${a.model})`).join(" → "));
   else if(e.type === "stage")     VB.beginStage(e.name, e.model, e.loaded, e.role);
@@ -916,7 +940,7 @@ function vbEvent(e){
   else if(e.type === "agent_start") VB.beginStage(e.persona, e.model, true, "lead");
   else if(e.type === "thinking")  VB.thinking(e.text);
   else if(e.type === "token")     VB.token(e.text);
-  else if(e.type === "tool")      VB.tool(e.name, e.args);
+  else if(e.type === "tool")      VB.tool(e.name, e.args, e.pretty);
   else if(e.type === "tool_result") VB.toolResult(e.name, e.content);
   else if(e.type === "trimmed")   VB.note("context trimmed", `${e.dropped_chars} chars dropped to fit ${e.model} (${e.window})`);
   else if(e.type === "no_tools")    VB.note("no tools", e.message);
@@ -1004,7 +1028,90 @@ $("#m-reset").addEventListener("click", e => {
    so stopping is an explicit request, and reopening shows whatever is still going. */
 const AW = { running:false, name:"console", ctrl:null };
 
+function awFields(){
+  return {
+    name: $("#aw-name").value.trim(),
+    goal: $("#aw-goal").value.trim(),
+    success: $("#aw-success").value.trim(),
+    constraints: $("#aw-constraints").value.trim(),
+    persona: $("#aw-persona").value || "dev_agent",
+    interval: parseInt($("#aw-interval").value || "0", 10) || 0,
+    max_cycles: parseInt($("#aw-cycles").value || "0", 10) || null,
+    tools: $("#aw-tools").value.split(",").map(t => t.trim()).filter(Boolean),
+    model: MODEL.override || "",
+  };
+}
+
+function loadInto(a){
+  $("#aw-name").value = a.name || "";
+  $("#aw-goal").value = a.goal || "";
+  $("#aw-success").value = a.success || "";
+  $("#aw-constraints").value = a.constraints || "";
+  $("#aw-persona").value = a.persona || "dev_agent";
+  $("#aw-interval").value = a.interval || 0;
+  $("#aw-cycles").value = a.max_cycles || 0;
+  $("#aw-tools").value = (a.tools || []).join(", ");
+}
+
+/* Saved agents are listed inside the wizard rather than in a separate screen: the
+   thing you want after seeing one is usually to run it or edit it, and both live
+   here. Editing loads the definition into the same fields you would type into. */
+async function refreshSaved(){
+  let d;
+  try { d = await (await fetch("/api/agents")).json(); } catch(e){ return; }
+  const list = (d && d.agents) || [];
+  $("#aw-saved-wrap").hidden = !list.length;
+  const box = $("#aw-saved"); box.innerHTML = "";
+  list.forEach(a => {
+    const st = a.state || {};
+    const bits = [];
+    if(a.running) bits.push("running");
+    else if(st.done) bits.push("done");
+    else if(st.cycle) bits.push(`cycle ${st.cycle}`);
+    if(st.stopped_reason) bits.push(st.stopped_reason);
+    if((a.unknown_tools||[]).length) bits.push("unknown tools: " + a.unknown_tools.join(", "));
+
+    const row = el("div","srow2");
+    row.innerHTML =
+      `<span class="nm${a.enabled ? "" : " off"}">${esc(a.name)}</span>` +
+      `<span class="ds">${esc(a.description || a.goal)}${bits.length ? " · " + esc(bits.join(" · ")) : ""}</span>`;
+    const mk = (label, fn) => { const b = el("button"); b.textContent = label;
+                                b.addEventListener("click", fn); row.appendChild(b); };
+    mk("run",  () => { agentClose(); agentStart({saved: a.name}); });
+    mk("edit", () => loadInto(a));
+    mk(a.enabled ? "disable" : "enable", async () => {
+      await fetch(`/api/agents/${encodeURIComponent(a.name)}/enabled?on=${!a.enabled}`,
+                  {method:"POST"});
+      refreshSaved();
+    });
+    mk("delete", async () => {
+      // No confirm() — a modal dialog would block the page; the row just asks twice.
+      const b = row.lastChild;
+      if(b.textContent !== "sure?"){ b.textContent = "sure?"; return; }
+      await fetch("/api/agents/" + encodeURIComponent(a.name), {method:"DELETE"});
+      refreshSaved();
+    });
+    box.appendChild(row);
+  });
+}
+
+async function agentSave(){
+  const f = awFields();
+  if(!f.name){ $("#aw-hint").textContent = "a name is required to save"; return; }
+  if(!f.goal){ $("#aw-hint").textContent = "a goal is required"; return; }
+  const r = await (await fetch("/api/agents", {
+    method:"POST", headers:{"Content-Type":"application/json"},
+    body: JSON.stringify(f),
+  })).json();
+  if(r.error){ $("#aw-hint").textContent = r.error; return; }
+  $("#aw-hint").textContent = (r.unknown_tools||[]).length
+    ? `saved — but these tools do not exist: ${r.unknown_tools.join(", ")}`
+    : `saved as ${r.saved} · run it any time from this list`;
+  refreshSaved();
+}
+
 function agentOpen(){
+  refreshSaved();
   const sel = $("#aw-persona");
   if(!sel.options.length){
     (window.AGENTS || []).forEach(a => {
@@ -1033,13 +1140,19 @@ async function agentStop(){
   }catch(e){ /* the run ends on its own if the server is gone */ }
 }
 
-async function agentStart(){
-  const goal = $("#aw-goal").value.trim();
-  if(!goal){ $("#aw-hint").textContent = "a goal is required"; $("#aw-goal").focus(); return; }
+async function agentStart(opts){
+  opts = opts || {};
+  const f = awFields();
+  const goal = opts.saved ? opts.saved : f.goal;
+  if(!opts.saved && !f.goal){
+    $("#aw-hint").textContent = "a goal is required"; $("#aw-goal").focus(); return;
+  }
+  AW.name = opts.saved || f.name || "console";
   agentClose();
   clearEmpty();
   agentRunning(true);
-  say("you → agent","msg-me").textContent = goal;
+  say("you → agent","msg-me").textContent =
+    opts.saved ? `run saved agent: ${opts.saved}` : goal;
 
   VB.clear();
   const th = thinkingLine();
@@ -1072,7 +1185,7 @@ async function agentStart(){
       answer.querySelector(".cursor").insertAdjacentText("beforebegin", e.text);
       scroll();
     } else if(e.type === "tool"){
-      th.set(`cycle ${cycle} · ${e.name}(${JSON.stringify(e.args).slice(0,60)})`, true);
+      th.set(`cycle ${cycle} · ${e.pretty || e.name}`, true);
     } else if(e.type === "idle"){
       th.set(`idle ${e.seconds}s — waiting for the next cycle`);
     } else if(e.type === "cycle_error"){
@@ -1101,16 +1214,11 @@ async function agentStart(){
     const res = await fetch("/api/agent/start", {
       method:"POST", headers:{"Content-Type":"application/json"},
       signal: AW.ctrl.signal,
-      body: JSON.stringify({
-        goal,
-        success: $("#aw-success").value.trim(),
-        constraints: $("#aw-constraints").value.trim(),
-        persona: $("#aw-persona").value || "dev_agent",
-        interval: parseInt($("#aw-interval").value || "0", 10),
-        max_cycles: parseInt($("#aw-cycles").value || "0", 10),
-        name: AW.name,
-        model: MODEL.override || "",
-      }),
+      // A saved agent is run by name only — sending the form fields as well would
+      // let the running copy drift from what is on disk.
+      body: JSON.stringify(opts.saved
+        ? {saved: opts.saved}
+        : {...f, name: AW.name, max_cycles: f.max_cycles || 0}),
     });
     if(!res.ok || !res.body) throw new Error("agent stream unavailable ("+res.status+")");
     const reader = res.body.getReader(), dec = new TextDecoder();
@@ -1132,18 +1240,20 @@ async function agentStart(){
   } finally {
     Tps.stop(); th.kill();
     if(answer){ const c = answer.querySelector(".cursor"); if(c) c.remove(); }
-    resetUnits(); agentRunning(false); scroll();
+    resetUnits(); agentRunning(false); refreshSaved(); scroll();
   }
 }
 
 $("#agent-open").addEventListener("click", agentOpen);
 $("#aw-close").addEventListener("click", agentClose);
 $("#aw-cancel").addEventListener("click", agentClose);
-$("#aw-start").addEventListener("click", agentStart);
+$("#aw-start").addEventListener("click", () => agentStart());
+$("#aw-save").addEventListener("click", agentSave);
 $("#agent-stop").addEventListener("click", agentStop);
 $("#agentwiz").addEventListener("keydown", e => {
   if(e.key === "Escape") agentClose();
   if(e.key === "Enter" && e.target.id !== "aw-start") agentStart();
+  if(e.key === "Enter" && e.metaKey) agentSave();
 });
 
 /* If an agent is already running server-side, say so on load rather than pretending
@@ -1264,9 +1374,12 @@ const bumpTool = n => { const x = tBox.querySelector(`[data-tc="${n}"]`); if(x) 
 /* ══ wire (always live) ═════════════════════════════════════════════════ */
 let frames = 0;
 const wireBody = $("#wire-body");
-function wireFrame(dir, json, kind){
+/* Real MCP traffic, rendered as lines rather than frames. This used to print
+   fabricated JSON-RPC payloads — a mockup pretending to be a protocol inspector —
+   which was both untrue and the last place raw JSON was shown. */
+function wireFrame(dir, text, kind){
   const w = $("#wire"); if(!w) return;
-  const pretty = esc(json).replace(/&quot;([a-zA-Z_]+)&quot;:/g,'<b>"$1"</b>:');
+  const pretty = esc(text);
   const arrow = dir==="in" ? "←" : "→";
   w.appendChild(el("div","frame",
     `<span class="ar ${dir==="in"?"in":""} ${kind==="rag"?"rag":""}">${arrow}</span><span class="js">${pretty}</span>`));
@@ -1274,16 +1387,27 @@ function wireFrame(dir, json, kind){
   wireBody.scrollTop = wireBody.scrollHeight;
   while(w.children.length > 220) w.removeChild(w.firstChild);
 }
-// boot handshakes — both servers are up before the operator types anything
-function bootWire(){
-  wireFrame("out",'{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","clientInfo":{"name":"lag"}}}');
-  wireFrame("in", '{"jsonrpc":"2.0","id":1,"result":{"serverInfo":{"name":"lag-tools"},"capabilities":{"tools":{}}}}');
-  wireFrame("out",'{"jsonrpc":"2.0","id":2,"method":"tools/list"}');
-  wireFrame("in", '{"jsonrpc":"2.0","id":2,"result":{"tools":[8 items]}}');
-  wireFrame("out",'{"jsonrpc":"2.0","id":3,"method":"initialize","params":{"clientInfo":{"name":"lag"}}}',"rag");
-  wireFrame("in", '{"jsonrpc":"2.0","id":3,"result":{"serverInfo":{"name":"lag-rag"},"capabilities":{"tools":{}}}}',"rag");
-  wireFrame("out",'{"jsonrpc":"2.0","id":4,"method":"tools/list"}',"rag");
-  wireFrame("in", '{"jsonrpc":"2.0","id":4,"result":{"tools":[{"name":"search_knowledge_base"}]}}',"rag");
+/* Filled from /api/state, so it reports the servers that actually answered rather
+   than a handshake nobody performed. */
+function bootWire(st){
+  if(!st) return;
+  wireFrame("in", `lag-tools · ${(st.tools||[]).length} tools over stdio`);
+  wireFrame("in", `lag-rag · ${(st.rag_tools||[]).join(", ")} · `
+    + `${(st.chroma && st.chroma.chunks) || 0} chunks indexed`, "rag");
+}
+
+/* Every real tool call and result, in the same readable form as everywhere else. */
+function wireEvent(e){
+  const rag = e.name === "search_knowledge_base" ? "rag" : "";
+  if(e.type === "tool"){
+    bumpTool(e.name);
+    wireFrame("out", e.pretty || (e.name + "()"), rag);
+  } else if(e.type === "tool_result"){
+    const body = String(e.content || "");
+    const lines = body ? body.split("\n").length : 0;
+    wireFrame("in", `${e.name} → ${lines} line${lines === 1 ? "" : "s"}`
+      + (body ? ` · ${body.slice(0, 70).replace(/\s+/g, " ")}` : ""), rag);
+  }
 }
 $("#wire-toggle").addEventListener("click", e => {
   const p = $("#wirepanel"), min = p.classList.toggle("min");
@@ -1320,67 +1444,12 @@ async function typeInto(node, text, ms=10){
 }
 
 /* retrieval runs on every single turn — never optional */
-async function retrieve(q, th){
-  th.set("searching the knowledge base", true);
-  bumpTool("search_knowledge_base");
-  wireFrame("out",`{"jsonrpc":"2.0","id":${frames+1},"method":"tools/call","params":{"name":"search_knowledge_base","arguments":{"query":"${q.slice(0,48)}","k":5}}}`,"rag");
-  await sleep(420);
-  wireFrame("in", `{"jsonrpc":"2.0","id":${frames},"result":{"content":[{"type":"text","text":"Found 5 relevant chunks…"}]}}`,"rag");
-  renderSims(true);
-  th.set("read 5 chunks · reasoning", true);
-  await sleep(520);
-}
 
-async function toolTurn(name, args){
-  bumpTool(name);
-  const a = JSON.stringify(args);
-  wireFrame("out",`{"jsonrpc":"2.0","id":${frames+1},"method":"tools/call","params":{"name":"${name}","arguments":${a}}}`);
-  await sleep(300);
-  wireFrame("in", `{"jsonrpc":"2.0","id":${frames},"result":{"content":[{"type":"text","text":"…"}],"isError":false}}`);
-  await sleep(160);
-}
 
 /* ══ answers ════════════════════════════════════════════════════════════ */
-const ANSWERS = {
-  default:
-    "This is local-agent-kit — a fully offline multi-agent harness over Ollama. Agents run a "+
-    "reason-act-observe loop and reach their tools over MCP, so the same seven tools work whether "+
-    "they're dispatched in-process or through a real protocol server.\n\n"+
-    "Retrieval is not a separate mode here: every turn searches the vector store first, so answers "+
-    "are grounded in your own documents rather than the model's recollection.",
-  hnsw:
-    "HNSW walks a layered proximity graph. It starts at a coarse layer where a few long hops cover "+
-    "most of the space, then descends into finer layers to refine the neighbourhood — reaching the "+
-    "nearest vectors in roughly log(n) hops instead of scanning all of them.\n\n"+
-    "It's approximate rather than exact, so it can miss the single best match, but it returns the "+
-    "true top-5 about 99% of the time. That trade is why the search feels instant at 9 chunks and "+
-    "would still feel instant at 900,000.",
-};
-const pickAnswer = q => /hnsw|vector|embed|similar|cosine|neighbour|neighbor/i.test(q) ? ANSWERS.hnsw : ANSWERS.default;
 const paras = t => t.split("\n\n");
 
 /* ══ turns ══════════════════════════════════════════════════════════════ */
-async function soloTurn(q){
-  const th = thinkingLine();
-  loadModel(S.model);
-  await sleep(320);
-  await retrieve(q, th);
-  tick();
-  if(/file|project|directory|repo/i.test(q)){
-    th.set("reading the working tree");
-    await toolTurn("list_dir", {path:"."});
-    tick();
-  }
-  th.set("composing an answer");
-  await sleep(360); tick();
-  th.kill();
-  const box = say(`lag · ${S.model}`, "msg-ai");
-  for(const p of paras(pickAnswer(q))){
-    const n = el("p"); box.appendChild(n);
-    await typeInto(n, p);
-  }
-  tick();
-}
 
 // swarmTurn() lived here — a scripted simulation of the old parallel/crew modes.
 // Both modes are gone (only one chat model stays resident, so concurrent agents on
@@ -1458,7 +1527,7 @@ async function realTurn(q, mode, opts){
     } else if(e.type === "no_tools"){
       const b = say("lag","msg-ai"); b.style.color = "var(--amber)"; b.textContent = e.message;
     } else if(e.type === "tool"){
-      th.set(`${curStage||"agent"} · ${e.name}(${JSON.stringify(e.args).slice(0,60)})`, true);
+      th.set(`${curStage||"agent"} · ${e.pretty || e.name}`, true);
     } else if(e.type === "error"){
       faulted = true; th.kill();
       const b = say("fault","msg-ai"); b.style.color="var(--fault)"; b.textContent = e.message;
@@ -1543,6 +1612,7 @@ async function loadState(){
       S.model = st.chat_model;
       fillModels(st);
     }
+    bootWire(st);          // the wire panel reports servers that actually answered
     // Each persona has its OWN model — most sit on the worker tag, not the
     // orchestrator's. This used to overwrite every roster tag with chat_model, so all
     // nine units claimed to be running the orchestrator.
@@ -1863,7 +1933,6 @@ if(!RM){
   }
   $("#boot").classList.add("done");
   setTimeout(() => { const b = $("#boot"); if(b) b.remove(); }, 600);
-  bootWire();
   loadState();
   $("#input").focus({preventScroll:true});
 })();
