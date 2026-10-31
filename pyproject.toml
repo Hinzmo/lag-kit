@@ -12,7 +12,7 @@ dependencies = [
 
 [project.optional-dependencies]
 rag = ["chromadb>=0.5", "ollama>=0.4"]   # Phase 6 — vector store + local embeddings
-dev = ["pytest>=8.0", "httpx>=0.27"]     # httpx: FastAPI TestClient for the web console
+dev = ["pytest>=8.0", "httpx>=0.27", "ruff>=0.6"]   # httpx: FastAPI TestClient · ruff: see [tool.ruff]
 study = ["pypdf>=5.0"]   # PDF course material for `lag study`
 web = ["fastapi>=0.115", "uvicorn>=0.30"]   # local phosphor console (lag serve); all local
 
@@ -25,3 +25,25 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/lag"]
+
+
+# Lint config for the cleanup pass. Deliberately a short list: these are the rules that
+# have actually caught something here — dead imports and names (F), likely bugs (B),
+# and the simplifications that made teardown paths clearer (SIM/RET/C4/PIE).
+#   .venv/bin/python -m ruff check src servers tests
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["F", "B", "SIM", "C4", "RET", "PIE", "UP"]
+# Tests monkeypatch with throwaway lambdas; naming their unused args buys nothing.
+ignore = ["UP037"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["B011"]
+# `NAMED_CREW <= stems` is a set-SUBSET assertion, not a Yoda condition. Reversing it,
+# as SIM300 suggests, would invert what the test checks.
+"tests/test_personas.py" = ["SIM300"]
+# `lag study` is a separately-owned subsystem; its tests are left as written.
+"tests/test_study.py" = ["UP031"]

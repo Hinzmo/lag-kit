@@ -243,6 +243,23 @@ class TestAgentModeTools:
         assert "must start with http" in tools.http_fetch("file:///etc/passwd")
         assert "must start with http" in tools.http_fetch("")
 
+    def test_http_fetch_blocks_ssrf_to_non_public_addresses(self):
+        """http_fetch runs on the host, so a model tricked into fetching an internal
+        address would reach it. IP literals keep this hermetic — no DNS, no network."""
+        assert "loopback" in tools.http_fetch("http://127.0.0.1/")
+        assert "loopback" in tools.http_fetch("http://[::1]/")
+        # 169.254.169.254 is the cloud metadata address; it is link-local
+        assert "link-local" in tools.http_fetch("http://169.254.169.254/latest/meta-data/")
+        assert "private" in tools.http_fetch("http://10.0.0.5/")
+        assert "private" in tools.http_fetch("http://192.168.1.1/")
+        # and Ollama on localhost by port is exactly the kind of thing we are stopping
+        assert "blocked" in tools.http_fetch("http://localhost:11434/api/tags")
+
+    def test_ssrf_guard_allows_a_public_address(self):
+        """A routable public IP literal passes the guard (it still would not connect in
+        this test, but the guard must not be the thing that stops it)."""
+        assert tools._ssrf_block_reason("http://93.184.216.34/") is None
+
     def test_sleep_for_is_capped(self, monkeypatch):
         """Capped at 300 so a stop request is never far from being noticed.
 
@@ -294,3 +311,113 @@ class TestAgentModeTools:
         out = tools.find_files("*.py", str(tmp_path))
         assert "top.py" in out and "deep.py" not in out
         assert "recursively" not in out
+
+
+class TestHttpFetchRedirects:
+    """The SSRF guard vetted only the first URL, and urlopen follows 3xx on its own.
+
+    So a public page that answers `302 Location: http://127.0.0.1:11434/...` turned
+    one vetted request into an unvetted one to the host's own services. Every hop
+    has to pass the same check as the first.
+
+    No internet needed: a local server plays both parts. Its /r path stands in for
+    the attacker's public page (the guard is told to treat that one URL as public),
+    and everything it redirects to faces the real guard.
+    """
+
+    @pytest.fixture
+    def server(self):
+        import http.server
+        import threading
+
+        class H(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                port = self.server.server_address[1]
+                if self.path == "/r":                       # "evil.example"
+                    self.send_response(302)
+                    self.send_header("Location", f"http://127.0.0.1:{port}/secret")
+                    self.end_headers()
+                elif self.path == "/ftp":
+                    self.send_response(302)
+                    self.send_header("Location", "ftp://example.com/x")
+                    self.end_headers()
+                elif self.path == "/public-hop":           # redirect to another "public" page
+                    self.send_response(302)
+                    self.send_header("Location", f"http://127.0.0.1:{port}/landing")
+                    self.end_headers()
+                else:
+                    body = b"INTERNAL SECRET" if self.path == "/secret" else b"landing page"
+                    self.send_response(200)
+                    self.send_header("Content-Type", "text/plain")
+                    self.end_headers()
+                    self.wfile.write(body)
+
+            def log_message(self, *a):
+                pass
+
+        srv = http.server.HTTPServer(("127.0.0.1", 0), H)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        yield f"http://127.0.0.1:{srv.server_address[1]}"
+        srv.shutdown()
+        srv.server_close()
+
+    def _pretend_public(self, monkeypatch, *paths):
+        real = tools._ssrf_block_reason
+        monkeypatch.setattr(tools, "_ssrf_block_reason",
+                            lambda url: None if url.endswith(paths) else real(url))
+
+    def test_a_redirect_to_loopback_is_refused(self, server, monkeypatch):
+        self._pretend_public(monkeypatch, "/r")
+        out = tools.http_fetch(f"{server}/r")
+        assert "INTERNAL SECRET" not in out
+        assert "blocked" in out and "redirect" in out and "loopback" in out
+
+    def test_a_redirect_off_http_is_refused(self, server, monkeypatch):
+        self._pretend_public(monkeypatch, "/ftp")
+        out = tools.http_fetch(f"{server}/ftp")
+        assert "blocked" in out and "ftp://" in out
+
+    def test_a_redirect_between_public_pages_still_works(self, server, monkeypatch):
+        """The guard must not break ordinary redirects (http->https, moved pages)."""
+        self._pretend_public(monkeypatch, "/public-hop", "/landing")
+        assert "landing page" in tools.http_fetch(f"{server}/public-hop")
+
+
+class TestSSRFAddressCoverage:
+    """The guard listed bad kinds of address (loopback, private, ...) and allowed the
+    rest, so a range nobody listed got through: 100.64.0.0/10 is neither private nor
+    global, and it is where Tailscale puts every device on a tailnet.
+
+    Default-deny (`not is_global`) closes that — but is not enough alone either:
+    Python calls the NAT64 prefix 64:ff9b::/96 *global*, though 64:ff9b::7f00:1
+    carries 127.0.0.1. IPv6 forms that embed an IPv4 address are unwrapped and the
+    inner address is checked too.
+    """
+
+    @pytest.mark.parametrize("host", [
+        "100.64.0.1",               # CGNAT / Tailscale device
+        "100.100.100.100",          # Tailscale's MagicDNS
+        "198.18.0.1",               # benchmarking range
+        "[::ffff:127.0.0.1]",       # IPv4-mapped loopback
+        "[::ffff:192.168.1.1]",     # IPv4-mapped LAN
+        "[::ffff:100.64.0.1]",      # IPv4-mapped tailnet
+        "[64:ff9b::7f00:1]",        # NAT64 -> 127.0.0.1 (is_global is True!)
+        "[64:ff9b::a00:5]",         # NAT64 -> 10.0.0.5
+        "[64:ff9b::6440:1]",        # NAT64 -> 100.64.0.1
+        "[2002:7f00:1::]",          # 6to4 -> 127.0.0.1
+        "[fd7a:115c:a1e0::1]",      # Tailscale IPv6 (ULA)
+        "0.0.0.0",
+    ])
+    def test_non_public_addresses_are_refused(self, host):
+        assert tools._ssrf_block_reason(f"http://{host}/") is not None, host
+
+    def test_cgnat_refusal_names_the_range(self):
+        """A Tailscale address should be recognisable from the message."""
+        assert "100.64.0.0/10" in tools._ssrf_block_reason("http://100.100.100.100/")
+
+    def test_nat64_refusal_names_the_embedded_address(self):
+        assert "127.0.0.1" in tools._ssrf_block_reason("http://[64:ff9b::7f00:1]/")
+
+    @pytest.mark.parametrize("host", ["8.8.8.8", "1.1.1.1", "[2606:4700:4700::1111]"])
+    def test_public_addresses_still_pass(self, host):
+        assert tools._ssrf_block_reason(f"http://{host}/") is None, host

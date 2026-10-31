@@ -4,6 +4,10 @@ A fully offline multi-agent harness over [Ollama](https://ollama.com). No cloud,
 API keys — your data never leaves the machine. Agents call tools exposed over the
 Model Context Protocol (MCP), and retrieval is just one more MCP server.
 
+**Running the web console:** start it from the **repo root** (so the RAG server resolves
+`./.chroma`) with `lag serve`, then open the printed localhost URL. For live-reload during
+development, `uvicorn lag.web:app --reload` from the repo root is the equivalent.
+
 > **v2 rebuild.** The original kit faked the tool layer with a direct-dispatch
 > HTTP/JSON-RPC shim to avoid protocol overhead. v2 replaces that with a real MCP
 > boundary: tools live in separate server processes, get discovered at runtime, and

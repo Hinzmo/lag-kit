@@ -213,8 +213,11 @@ class RAGEngine:
         )
         out = []
         if res["documents"] and res["documents"][0]:
+            # Chroma returns these as parallel arrays. strict=True because silently
+            # truncating to the shortest would drop search results with no signal —
+            # the failure would look like "retrieval found less", not like a bug.
             for text, meta, dist in zip(res["documents"][0], res["metadatas"][0],
-                                        res["distances"][0]):
+                                        res["distances"][0], strict=True):
                 out.append({
                     "text": text,
                     "source": (meta or {}).get("source", "unknown"),

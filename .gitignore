@@ -54,4 +54,21 @@ htmlcov/
 # set-ups you build and keep. Only what a run leaves behind is per-machine.
 agents/*.state.json
 agents/*.stop
+agents/.run.lock
 agent/
+
+# Agent sandbox workspaces: scratch space, per-machine
+agents/workspaces/
+
+# jsdom for the console boot test: installed on demand, never committed
+tests/js/node_modules/
+tests/js/package-lock.json
+
+# ── Per-machine cruft, never committed ───────────────────
+# Any node_modules anywhere (covers a stray npm install like src/lag/)
+node_modules/
+src/lag/package.json
+src/lag/package-lock.json
+# Recovery archive and a local price log that were tracked by mistake
+files.zip
+price.log

@@ -16,12 +16,14 @@ Running one agent on a small task is not a special case: it is a one-stage pipel
 plan=False, so clicking a persona in the roster reuses this same path.
 
 The MCP tool provider is built once and cached: spawning both servers per request would
-leak subprocesses (MCPBridge has no close() yet), and a single shared provider is fine
-for a single-user console. Run the server from the repo root so the RAG server resolves
+cost a second of startup each time, and a single shared provider is fine for a
+single-user console. The server owns it, so the lifespan hook closes it at shutdown —
+two server subprocesses and their threads. Run the server from the repo root so the RAG server resolves
 `./.chroma` — the same cwd caveat as `lag run --mcp`.
 """
 from __future__ import annotations
 
+import contextlib
 import json
 import queue
 import threading
@@ -30,21 +32,40 @@ from pathlib import Path
 import ollama
 import yaml
 from fastapi import FastAPI
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
 from .config import load_config, load_persona
 from .ollama_client import OllamaClient, capabilities
+from .providers import ToolsExcept
 from .pipeline import Pipeline
 from .tools import TOOLS, LocalToolProvider
 
 _ROOT = Path(__file__).resolve().parents[2]
 _UI = _ROOT / "ui" / "console.html"
 
-app = FastAPI(title="lag console")
-
 # Built once, reused across requests (see module docstring).
 _provider_cache: dict = {}
+
+
+@contextlib.asynccontextmanager
+async def _lifespan(_app):
+    yield
+    # Shutdown: this process built these providers, so it closes them. A build that
+    # FAILED leaves nothing here to close — from_config cleans up after itself, which
+    # matters because _provider retries on every request while a server is broken.
+    for key in list(_provider_cache):
+        close = getattr(_provider_cache.pop(key), "close", None)
+        if close:
+            close()
+
+
+app = FastAPI(title="lag console", lifespan=_lifespan)
+
+
+def _without_retrieval(provider):
+    """The provider minus the knowledge base."""
+    return ToolsExcept(provider, ["search_knowledge_base"])
 
 
 def _provider(cfg: dict, mcp: bool):
@@ -69,13 +90,13 @@ def _ollama_status(cfg: dict) -> tuple[bool, list[str], list[dict]]:
         available = [m.model for m in client.list().models]
     except Exception:
         up = False
-    try:
+    # A failure here means "cannot tell what is loaded", which the console renders as
+    # an empty panel — not a reason to fail the whole status call.
+    with contextlib.suppress(Exception):
         loaded = [
             {"name": m.model, "size_gb": round((m.size or 0) / 1e9, 2)}
             for m in client.ps().models
         ]
-    except Exception:
-        pass
     return up, available, loaded
 
 
@@ -176,6 +197,9 @@ class RunRequest(BaseModel):
     # Ignored when `agents` names them explicitly (e.g. a single-agent task from the
     # roster), since that is the caller having already decided.
     route: bool = True
+    # Retrieval is on by default. Off withholds search_knowledge_base for this run —
+    # every other tool is untouched.
+    retrieval: bool = True
     mcp: bool = True
 
 
@@ -190,6 +214,8 @@ def run(req: RunRequest):
     cfg = load_config()
     try:
         provider = _provider(cfg, req.mcp)
+        if not req.retrieval:
+            provider = _without_retrieval(provider)
         if req.mode in (None, "", "solo"):
             model = cfg["models"]["worker"]
             client = OllamaClient.from_config(cfg, model)
@@ -219,6 +245,32 @@ def run(req: RunRequest):
 
 
 _DONE = object()
+
+
+def _stream(work) -> StreamingResponse:
+    """Run `work(emit)` on a worker thread and stream what it emits as SSE.
+
+    Both streaming endpoints were repeating the same five things — build a queue,
+    wrap the body in try/except/finally, push a sentinel, start a daemon thread,
+    construct the response — around a few lines that actually differed. Sharing it
+    also means the error contract is stated once: a failure arrives as a final
+    `error` EVENT rather than a failed request, so the console shows it as a message,
+    the same spirit as the tool layer returning errors instead of raising.
+    """
+    events: queue.Queue = queue.Queue()
+
+    def runner() -> None:
+        try:
+            work(events.put)
+        except Exception as e:  # noqa: BLE001 - surface to the UI, never 500
+            events.put({"type": "error", "message": f"{type(e).__name__}: {e}"})
+        finally:
+            events.put(_DONE)
+
+    threading.Thread(target=runner, daemon=True).start()
+    return StreamingResponse(_sse(events), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache",
+                                      "X-Accel-Buffering": "no"})
 
 
 def _sse(events: "queue.Queue"):
@@ -252,52 +304,39 @@ def stream(req: RunRequest):
     the same contract /api/run has and the same spirit as the tool layer.
     """
     cfg = load_config()
-    events: queue.Queue = queue.Queue()
+    def work(emit) -> None:
+        provider = _provider(cfg, req.mcp)
+        if not req.retrieval:
+            provider = _without_retrieval(provider)
 
-    def work() -> None:
-        try:
-            provider = _provider(cfg, req.mcp)
-            if req.mode in (None, "", "solo"):
-                model = req.model or cfg["models"]["worker"]
-                events.put({"type": "start", "loads": 1,
-                            "stages": [{"name": "solo", "model": model}]})
-                events.put({"type": "stage", "name": "solo", "model": model,
-                            "role": "stage", "loaded": True})
-                answer = OllamaClient.from_config(cfg, model).run(
-                    req.prompt, tool_provider=provider, on_event=events.put
-                )
-                events.put({"type": "done", "answer": answer})
-            else:
-                if req.route and not req.agents:
-                    # The lead reads the task against the roster and returns the ordered
-                    # subset that fits it, briefing them in the same turn.
-                    pipe = Pipeline.routed(req.prompt, cfg, provider,
-                                           on_event=events.put,
-                                           model_override=req.model)
-                else:
-                    default = cfg.get("pipeline", {}).get(
-                        "default_agents", "architect_agent,dev_agent,senior_dev_agent"
-                    )
-                    names = [a.strip() for a in (req.agents or default).split(",")]
-                    pipe = Pipeline.from_personas(names, cfg, provider,
-                                                  model_override=req.model)
-                events.put({
-                    "type": "start",
-                    "loads": pipe.loads(),
-                    "stages": [{"name": s.name, "model": s.model} for s in pipe.stages],
-                })
-                # Pipeline emits its own `done` with the final answer.
-                pipe.run(req.prompt, plan=req.plan, on_event=events.put)
-        except Exception as e:  # noqa: BLE001 - surface to the UI, never 500
-            events.put({"type": "error", "message": f"{type(e).__name__}: {e}"})
-        finally:
-            events.put(_DONE)
+        if req.mode in (None, "", "solo"):
+            model = req.model or cfg["models"]["worker"]
+            emit({"type": "start", "loads": 1,
+                  "stages": [{"name": "solo", "model": model}]})
+            emit({"type": "stage", "name": "solo", "model": model,
+                  "role": "stage", "loaded": True})
+            answer = OllamaClient.from_config(cfg, model).run(
+                req.prompt, tool_provider=provider, on_event=emit)
+            emit({"type": "done", "answer": answer})
+            return
 
-    threading.Thread(target=work, daemon=True).start()
+        if req.route and not req.agents:
+            # The lead reads the task against the roster and returns the ordered
+            # subset that fits it, briefing them in the same turn.
+            pipe = Pipeline.routed(req.prompt, cfg, provider, on_event=emit,
+                                   model_override=req.model)
+        else:
+            default = cfg.get("pipeline", {}).get(
+                "default_agents", "architect_agent,dev_agent,senior_dev_agent")
+            names = [a.strip() for a in (req.agents or default).split(",")]
+            pipe = Pipeline.from_personas(names, cfg, provider,
+                                          model_override=req.model)
+        emit({"type": "start", "loads": pipe.loads(),
+              "stages": [{"name": s.name, "model": s.model} for s in pipe.stages]})
+        # Pipeline emits its own `done` with the final answer.
+        pipe.run(req.prompt, plan=req.plan, on_event=emit)
 
-    return StreamingResponse(_sse(events), media_type="text/event-stream",
-                             headers={"Cache-Control": "no-cache",
-                                      "X-Accel-Buffering": "no"})
+    return _stream(work)
 
 
 class AgentRequest(BaseModel):
@@ -310,17 +349,39 @@ class AgentRequest(BaseModel):
     constraints: str = ""
     persona: str = "dev_agent"
     interval: int = 0
-    max_cycles: int | None = None
+    max_cycles: int = 20     # per run, a resume gets a fresh budget; 0 = until done
     name: str = "default"
     model: str = ""          # override the persona's tag for this run
+    network: bool = True     # public internet via the egress proxy; false seals it
+    retrieval: bool = True
     max_failures: int = 5    # consecutive failed cycles before the agent gives up
     max_idle: int = 5        # consecutive cycles doing nothing before it gives up
     mcp: bool = True
 
 
-# One loop per run name. Two loops on the same goal would double every tool call and
-# fight over the same state file, and the second would silently win the last write.
+# One agent at a time on this machine (see agent.py, "one agent at a time"). Two
+# layers, because they guard different things:
+#   _RUNNING + _RUN_GUARD  this process. Claimed in the request, under a lock, BEFORE
+#                          answering — so a second click is refused at once.
+#   the OS lock            every process (the CLI, another server). Taken by
+#                          AgentLoop.run itself, so no entry point can skip it.
+# The check used to read _RUNNING in the request but add to it in the worker thread;
+# two requests landing in that gap both passed, and two loops ran.
 _RUNNING: set[str] = set()
+_RUN_GUARD = threading.Lock()
+
+
+def _agent_holder() -> dict | None:
+    from .agent import running_agent
+    return running_agent()
+
+
+def _busy() -> str | None:
+    """The agent running anywhere on this machine, or None."""
+    if _RUNNING:
+        return next(iter(_RUNNING))
+    held = _agent_holder()
+    return held.get("name", "another agent") if held else None
 
 
 @app.post("/api/agent/start")
@@ -334,14 +395,19 @@ def agent_start(req: AgentRequest):
     from .agent import AgentLoop, GoalSpec
 
     cfg = load_config()
-    events: queue.Queue = queue.Queue()
-
     run_name = req.saved or req.name
-    if run_name in _RUNNING:
-        return {"error": f"agent {run_name!r} is already running — stop it first"}
-
-    def work() -> None:
+    # Check and claim in one step. 409 (Conflict) rather than a 200 carrying an error:
+    # the console reads a 200 as the start of an event stream, found no events in
+    # it, and showed nothing at all.
+    with _RUN_GUARD:
+        busy = _busy()
+        if busy:
+            return JSONResponse(status_code=409, content={
+                "error": f"agent {busy!r} is already running — one agent at a time; "
+                         f"stop it first", "running": busy})
         _RUNNING.add(run_name)
+
+    def work(emit) -> None:
         try:
             if req.saved:
                 spec = GoalSpec.load(req.saved)
@@ -351,22 +417,30 @@ def agent_start(req: AgentRequest):
                 spec = GoalSpec(goal=req.goal, success=req.success,
                                 constraints=req.constraints, persona=req.persona,
                                 interval=req.interval,
-                                max_cycles=req.max_cycles or None, name=req.name,
-                                model=req.model or "",
+                                max_cycles=req.max_cycles, name=req.name,
+                                model=req.model or "", network=req.network,
                                 max_failures=req.max_failures, max_idle=req.max_idle)
-            AgentLoop(spec, cfg, _provider(cfg, spec.mcp if req.saved else req.mcp)
-                      ).run(on_event=events.put)
-        except Exception as e:  # noqa: BLE001 - surface to the UI, never 500
-            events.put({"type": "error", "message": f"{type(e).__name__}: {e}"})
+            prov = _provider(cfg, spec.mcp if req.saved else req.mcp)
+            if not req.retrieval:
+                prov = _without_retrieval(prov)
+            AgentLoop(spec, cfg, prov).run(on_event=emit)
         finally:
+            # Released here rather than in _stream, because "is this agent running"
+            # is this endpoint's concern, not the stream helper's.
             _RUNNING.discard(run_name)
-            events.put(_DONE)
 
-    threading.Thread(target=work, daemon=True).start()
+    try:
+        return _stream(work)
+    except BaseException:
+        _RUNNING.discard(run_name)         # the worker never started, so release here
+        raise
 
-    return StreamingResponse(_sse(events), media_type="text/event-stream",
-                             headers={"Cache-Control": "no-cache",
-                                      "X-Accel-Buffering": "no"})
+
+@app.get("/api/agent/running")
+def agent_running():
+    """Which agent is running on this machine, from any process — the console greys
+    out its start buttons on this."""
+    return {"running": _busy()}
 
 
 @app.get("/api/agent/status")
@@ -375,9 +449,10 @@ def agent_status(name: str = "default"):
     from .agent import AgentState
 
     st = AgentState.load(name)
+    running = _busy() == name
     if not st:
-        return {"exists": False, "running": name in _RUNNING, "name": name}
-    return {"exists": True, "running": name in _RUNNING, "name": name,
+        return {"exists": False, "running": running, "name": name}
+    return {"exists": True, "running": running, "name": name,
             "goal": st.spec.get("goal", ""), "persona": st.spec.get("persona", ""),
             "cycle": st.cycle, "done": st.done, "summary": st.summary,
             "notes": st.notes[-20:], "errors": st.errors,
@@ -408,7 +483,8 @@ class AgentDef(BaseModel):
     persona: str = "dev_agent"
     model: str = ""
     interval: int = 0
-    max_cycles: int | None = None
+    max_cycles: int = 20     # per run, a resume gets a fresh budget; 0 = until done
+    network: bool = True     # public internet via the egress proxy; false seals it
     max_failures: int = 5
     max_idle: int = 5
     enabled: bool = True
@@ -436,16 +512,30 @@ def agents_list():
     """Every saved agent, with its last run's outcome."""
     from .agent import GoalSpec
 
-    return {"agents": [_spec_row(sp, sp.name in _RUNNING) for sp in GoalSpec.list_all()]}
+    busy = _busy()
+    return {"agents": [_spec_row(sp, sp.name == busy) for sp in GoalSpec.list_all()],
+            "running": busy}
 
 
 @app.post("/api/agents")
 def agents_save(d: AgentDef):
-    """Create or update a saved agent. Editing never touches its run history."""
+    """Create or update a saved agent. Editing never touches its run history.
+
+    An update MERGES: only the fields the request actually carried change. The console
+    form shows a subset of a definition, and replacing the whole thing reset every
+    field it lacks to its default — re-saving switched a sealed agent's network back
+    on, re-enabled a disabled one, and wiped its description and workspace.
+    """
+    from dataclasses import asdict
+
     from .agent import GoalSpec
 
     try:
-        spec = GoalSpec(**d.model_dump())
+        try:
+            base = asdict(GoalSpec.load(d.name))
+        except FileNotFoundError:
+            base = {}                      # a new agent: unsent fields take defaults
+        spec = GoalSpec(**{**base, **d.model_dump(exclude_unset=True)})
         path = spec.save()
     except (ValueError, OSError) as e:
         return {"error": f"{type(e).__name__}: {e}"}
@@ -476,7 +566,7 @@ def agents_delete(name: str):
         spec = GoalSpec.load(name)
     except (FileNotFoundError, ValueError) as e:
         return {"error": str(e)}
-    if name in _RUNNING:
+    if _busy() == name:                    # from this process or any other
         return {"error": f"{name} is running — stop it first"}
     spec.delete()
     return {"deleted": name}

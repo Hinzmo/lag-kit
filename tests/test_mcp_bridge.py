@@ -162,3 +162,203 @@ def test_single_bridge_construction_still_works():
     provider = MCPToolProvider(_fake_bridge([_tool("read_file")]))
     assert len(provider.bridges) == 1
     assert [s["function"]["name"] for s in provider.schemas()] == ["read_file"]
+
+
+class TestBridgeShutdown:
+    """Provider-level closing. The bridge's own teardown is tested against a real
+    server in TestBridgeLifecycle below.
+
+    Three tests used to live here that built an MCPBridge with fake context managers
+    and checked close() called their __aexit__ in reverse order. They passed while the
+    real SDK raised on every close: a fake does not care which task exits it, and
+    which task exits it was the whole bug. Their promises are kept below against a
+    real server; the ordering one is now guaranteed by nested `async with`.
+    """
+
+    def test_the_provider_closes_every_bridge(self):
+        from lag.mcp_client import MCPToolProvider
+
+        closed = []
+
+        class FakeBridge:
+            def __init__(self, tag): self.tag = tag; self.tools = []
+            def close(self): closed.append(self.tag)
+
+        MCPToolProvider([FakeBridge("a"), FakeBridge("b")]).close()
+        assert closed == ["a", "b"]
+
+    def test_one_bridge_failing_to_close_does_not_strand_the_others(self):
+        from lag.mcp_client import MCPToolProvider
+
+        closed = []
+
+        class Bad:
+            tools = []
+            def close(self): raise RuntimeError("nope")
+
+        class Good:
+            tools = []
+            def close(self): closed.append(1)
+
+        MCPToolProvider([Bad(), Good()]).close()
+        assert closed == [1]
+
+
+# ── lifecycle: start, stop, and failing to start ────────────────────────────────
+import contextlib  # noqa: E402
+import os  # noqa: E402
+import subprocess  # noqa: E402
+import threading  # noqa: E402
+import time  # noqa: E402
+
+from lag import mcp_client  # noqa: E402
+from lag.mcp_client import MCPBridge  # noqa: E402
+from mcp.shared.exceptions import MCPError  # noqa: E402
+
+TOOLS_SERVER = str(Path(__file__).resolve().parents[1] / "servers" / "tools_server.py")
+
+
+def _my_servers() -> int:
+    """Server subprocesses whose parent is this test process."""
+    out = subprocess.run(["ps", "-A", "-o", "ppid=,command="],
+                         capture_output=True, text=True).stdout
+    me = str(os.getpid())
+    return sum(1 for line in out.splitlines()
+               if line.split()[:1] == [me] and "_server.py" in line)
+
+
+def _settle(pred, timeout=5.0) -> bool:
+    end = time.monotonic() + timeout
+    while time.monotonic() < end:
+        if pred():
+            return True
+        time.sleep(0.05)
+    return pred()
+
+
+@pytest.fixture
+def broken_server(tmp_path):
+    p = tmp_path / "broken_server.py"
+    p.write_text("import sys; sys.exit('server died on import')\n")
+    return str(p)
+
+
+class TestBridgeLifecycle:
+    def test_close_is_clean_not_lucky(self, monkeypatch):
+        """close() used to exit the SDK's context managers from a different task than
+        the one that entered them. anyio refuses that ("Attempted to exit cancel scope
+        in a different task"), and close() swallowed the error; the server only died
+        because the SDK happened to kill it before raising. Record what gets swallowed."""
+        swallowed = []
+
+        class Recording(contextlib.AbstractContextManager):
+            def __init__(self, *exc):
+                self.exc = exc
+
+            def __exit__(self, t, v, tb):
+                if t is not None:
+                    swallowed.append(f"{t.__name__}: {v}")
+                return t is not None and issubclass(t, self.exc)
+
+        monkeypatch.setattr(mcp_client.contextlib, "suppress", Recording)
+        threads = threading.active_count()
+        b = MCPBridge(sys.executable, [TOOLS_SERVER])
+        assert _my_servers() == 1
+        b.close()
+        assert swallowed == []
+        assert getattr(b, "close_error", None) is None
+        assert _settle(lambda: _my_servers() == 0), "the server outlived close()"
+        assert _settle(lambda: threading.active_count() <= threads), "a thread outlived close()"
+
+    def test_closing_twice_is_harmless(self):
+        b = MCPBridge(sys.executable, [TOOLS_SERVER])
+        b.close()
+        b.close()
+        assert b.close_error is None and not b._thread.is_alive()
+
+    def test_a_server_that_already_died_does_not_make_close_raise(self):
+        """Teardown also runs on failure paths, so it cannot itself fail."""
+        import signal
+
+        threads = threading.active_count()
+        b = MCPBridge(sys.executable, [TOOLS_SERVER])
+        out = subprocess.run(["ps", "-A", "-o", "pid=,ppid=,command="],
+                             capture_output=True, text=True).stdout
+        (pid,) = [int(r.split()[0]) for r in out.splitlines()
+                  if r.split()[1] == str(os.getpid()) and "tools_server.py" in r]
+        os.kill(pid, signal.SIGKILL)
+        b.close()                                   # must not raise
+        assert _settle(lambda: threading.active_count() <= threads)
+
+    def test_a_tool_call_works_between_open_and_close(self):
+        """The refactor must not cost the thing the bridge is for."""
+        b = MCPBridge(sys.executable, [TOOLS_SERVER])
+        try:
+            assert any(t.name == "now" for t in b.tools)
+            assert b.call("now", {}).strip()
+        finally:
+            b.close()
+        with pytest.raises(RuntimeError, match="closed"):
+            b.call("now", {})
+
+    def test_a_failed_build_leaves_nothing_behind(self, broken_server):
+        """The leak that actually happened: the first server starts, the second dies,
+        and the first is orphaned — with its thread — on every retry. The console
+        retries on every request while a server is broken."""
+        threads = threading.active_count()
+        for _ in range(2):
+            with pytest.raises(MCPError, match="Connection closed"):
+                MCPToolProvider.from_config({}, servers=(TOOLS_SERVER, broken_server))
+        assert _settle(lambda: _my_servers() == 0), f"{_my_servers()} orphaned server(s)"
+        assert _settle(lambda: threading.active_count() <= threads), (
+            f"{threading.active_count() - threads} leaked thread(s)")
+
+
+class _Closable:
+    def __init__(self):
+        self.tools, self.closed = [], 0
+
+    def close(self):
+        self.closed += 1
+
+
+def test_the_provider_closes_its_bridges_as_a_context_manager():
+    a, b = _Closable(), _Closable()
+    with MCPToolProvider([a, b]):
+        pass
+    assert (a.closed, b.closed) == (1, 1)
+
+
+def test_the_cli_closes_what_it_opens(monkeypatch):
+    """`lag run --mcp` owned a provider and never closed it. Exiting the process
+    happens to reap the servers (their stdin hits EOF), but only by accident."""
+    from typer.testing import CliRunner
+
+    from lag import cli
+
+    built = []
+
+    def fake_from_config(cls, cfg, servers=None):
+        p = MCPToolProvider([_Closable()])
+        built.append(p)
+        return p
+
+    monkeypatch.setattr(MCPToolProvider, "from_config", classmethod(fake_from_config))
+    monkeypatch.setattr(cli.OllamaClient, "from_config",
+                        classmethod(lambda c, *a, **k: type("C", (), {
+                            "run": lambda s, *a, **k: "ok"})()))
+    r = CliRunner().invoke(cli.app, ["run", "hi", "--mcp"])
+    assert r.exit_code == 0, r.output
+    assert built and built[0].bridges[0].closed == 1
+
+
+def test_the_web_server_closes_its_cached_providers_on_shutdown():
+    pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+
+    from lag import web
+
+    bridge = _Closable()
+    with TestClient(web.app):
+        web._provider_cache["mcp"] = MCPToolProvider([bridge])
+    assert bridge.closed == 1 and "mcp" not in web._provider_cache

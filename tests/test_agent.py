@@ -18,7 +18,7 @@ import pytest
 
 from lag import agent as agent_mod
 from lag import tools as tools_mod
-from lag.agent import AgentLoop, AgentState, GoalSpec, stop_path
+from lag.agent import AgentLoop, GoalSpec, stop_path
 
 
 @pytest.fixture(autouse=True)
@@ -34,6 +34,12 @@ def _isolate(tmp_path, monkeypatch):
                            "done": False, "summary": ""})
     slept: list[float] = []
     monkeypatch.setattr(agent_mod.time, "sleep", slept.append)
+    # Confinement is mandatory in agent mode, which would otherwise make every test
+    # here start a real container — slow, and it would make the whole suite depend on
+    # a running Docker daemon. The sandbox has its own tests, with a real container.
+    monkeypatch.setattr(agent_mod, "sandbox_available", lambda: (True, ""))
+    monkeypatch.setattr(agent_mod.Sandbox, "start", lambda self: None)
+    monkeypatch.setattr(agent_mod.Sandbox, "stop", lambda self: None)
     yield slept
 
 
@@ -148,6 +154,46 @@ class TestPersistence:
                           {"ollama_base_url": "x"}, tool_provider=object())
         assert other.state.cycle == 0
 
+    def test_a_resumed_run_gets_its_own_cycle_budget(self, monkeypatch):
+        """The cap bounds ONE run. Compared against the lifetime counter, an agent
+        that once reached its cap stopped before cycle 1 on every later start."""
+        _loop(monkeypatch, lambda n: "x", max_cycles=2, max_idle=0)[0].run()
+        resumed, calls = _loop(monkeypatch, lambda n: "x", max_cycles=2, max_idle=0)
+        state = resumed.run()
+        assert calls["n"] == 2                 # it actually worked this time
+        assert state.cycle == 4                # and the lifetime count kept going
+
+    def test_hitting_the_cap_says_so(self, monkeypatch):
+        loop, _ = _loop(monkeypatch, lambda n: "x", max_cycles=2, max_idle=0)
+        assert "cycle cap" in loop.run().stopped_reason
+
+    def test_a_stop_request_says_so(self, monkeypatch):
+        def behave(n):
+            stop_path("default").write_text("stop")
+            return "x"
+
+        loop, _ = _loop(monkeypatch, behave, max_cycles=50)
+        assert "stop requested" in loop.run().stopped_reason
+
+    def test_a_resume_starts_with_fresh_breakers_and_no_stale_reason(self, monkeypatch):
+        """Restarting after a breaker trip is a request to try again. Carrying the
+        counters over tripped it after one cycle; carrying the reason over left a
+        finished agent reporting 'done' and 'stopped: no progress' at once."""
+        first = _loop(monkeypatch, lambda n: "nothing", max_cycles=50, max_idle=2)[0]
+        assert "no tool call" in first.run().stopped_reason
+
+        again, calls = _loop(monkeypatch, lambda n: "nothing", max_cycles=50, max_idle=2)
+        again.run()
+        assert calls["n"] == 2                 # a full breaker's worth, not one cycle
+
+        def finish(n):
+            tools_mod.mark_done("got there")
+            return "ok"
+
+        last, _ = _loop(monkeypatch, finish, max_cycles=50, max_idle=2)
+        state = last.run()
+        assert state.done and state.stopped_reason == ""
+
     def test_corrupt_state_does_not_block_a_run(self, monkeypatch):
         agent_mod.AGENT_DIR.mkdir(parents=True, exist_ok=True)
         (agent_mod.AGENT_DIR / "default.json").write_text("{not json")
@@ -169,6 +215,16 @@ class TestGoalPrompt:
         spec = GoalSpec(goal="g")
         p = spec.prompt(200, [f"note {i}" for i in range(100)])
         assert "note 99" in p and "note 0" not in p
+
+    def test_shell_network_is_on_by_default_and_the_prompt_says_so(self):
+        """Networked by default (sealing it made agent mode unworkable), and the agent
+        is told the truth about its shell: public internet through a proxy, never the
+        host or LAN — so it neither assumes it is offline nor tries the host."""
+        assert GoalSpec(goal="g").network is True
+        on = GoalSpec(goal="g").prompt(1, [])
+        assert "PUBLIC internet only" in on and "proxy" in on
+        assert "host machine, the LAN and private addresses are refused" in on
+        assert "no network in the shell" in GoalSpec(goal="g", network=False).prompt(1, [])
 
 
 class TestGoalTools:
@@ -247,9 +303,7 @@ class TestCircuitBreakers:
             captured["on_event"]({"type": "tool", "name": "read_file", "args": {}})
             return "worked silently"
 
-        loop, _ = _loop(monkeypatch, behave, max_cycles=5, max_idle=2)
-        # capture the watcher the loop hands to the client
-        real = agent_mod.OllamaClient.from_config
+        _loop(monkeypatch, behave, max_cycles=5, max_idle=2)   # installs the stubs
 
         class C:
             def run(self, prompt, tool_provider=None, on_event=None):
@@ -457,3 +511,177 @@ class TestGoalToolsStayLocal:
     def test_a_bad_goal_tool_call_reports_rather_than_raising(self):
         p = agent_mod.GoalToolsLocal(self.RemoteInner())
         assert "error" in p.call("mark_done", {"wrong_arg": 1})
+
+
+class TestSandboxIsMandatory:
+    """Agent mode must refuse to run unconfined, and refuse BEFORE doing any work.
+
+    Failing at the first shell call would leave the agent several tool calls deep with
+    a half-finished job and a confusing error; failing at the top is a clean no.
+    """
+
+    def test_no_runtime_means_no_run(self, monkeypatch):
+        loop, calls = _loop(monkeypatch, lambda n: "should never happen")
+        monkeypatch.setattr(agent_mod, "sandbox_available",
+                            lambda: (False, "daemon is not running"))
+        state = loop.run()
+        assert calls["n"] == 0                       # not one cycle executed
+        assert "no sandbox" in state.stopped_reason
+        assert "daemon is not running" in state.stopped_reason
+
+    def test_a_sandbox_that_fails_to_start_also_stops_the_run(self, monkeypatch):
+        loop, calls = _loop(monkeypatch, lambda n: "should never happen")
+        monkeypatch.setattr(agent_mod.Sandbox, "start",
+                            lambda self: "image is not present")
+        state = loop.run()
+        assert calls["n"] == 0
+        assert "image is not present" in state.stopped_reason
+
+    def test_the_container_is_torn_down_even_if_the_loop_raises(self, monkeypatch):
+        stopped = []
+        monkeypatch.setattr(agent_mod.Sandbox, "stop",
+                            lambda self: stopped.append(True))
+
+        loop, _ = _loop(monkeypatch, lambda n: "x", max_cycles=1)
+        monkeypatch.setattr(loop, "_loop",
+                            lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
+        with pytest.raises(RuntimeError):
+            loop.run()
+        assert stopped, "a hard failure must not leak a container"
+
+    def test_tools_are_wrapped_in_the_sandbox(self, monkeypatch):
+        """The wrapper order matters: goal tools stay local, everything else confined."""
+        loop, _ = _loop(monkeypatch, lambda n: "x")
+        p = loop.provider
+        assert isinstance(p, agent_mod.GoalToolsLocal)        # control plane outermost
+        assert isinstance(p.inner, agent_mod.SandboxedProvider)
+
+
+class TestToolsExcept:
+    """Turning retrieval off should remove one tool, not require listing the other
+    fifteen — and must work over both transports, like every other filter here."""
+
+    class Inner:
+        def __init__(self, schemas): self._s = schemas; self.called = []
+        def schemas(self): return self._s
+        def call(self, name, args): self.called.append(name); return "ran " + name
+
+    def test_withholds_the_named_tool(self):
+        def search_knowledge_base(): pass
+        def read_file(): pass
+        inner = self.Inner([search_knowledge_base, read_file])
+        p = agent_mod.ToolsExcept(inner, ["search_knowledge_base"])
+        assert [f.__name__ for f in p.schemas()] == ["read_file"]
+
+    def test_withholds_it_over_mcp_schemas_too(self):
+        inner = self.Inner([
+            {"type": "function", "function": {"name": "search_knowledge_base"}},
+            {"type": "function", "function": {"name": "read_file"}},
+        ])
+        p = agent_mod.ToolsExcept(inner, ["search_knowledge_base"])
+        assert [agent_mod._schema_name(s) for s in p.schemas()] == ["read_file"]
+
+    def test_a_withheld_call_never_reaches_the_inner_provider(self):
+        inner = self.Inner([])
+        p = agent_mod.ToolsExcept(inner, ["search_knowledge_base"])
+        assert "switched off" in p.call("search_knowledge_base", {})
+        assert inner.called == []
+
+    def test_everything_else_passes_through(self):
+        inner = self.Inner([])
+        p = agent_mod.ToolsExcept(inner, ["search_knowledge_base"])
+        assert p.call("read_file", {}) == "ran read_file"
+
+    def test_an_empty_deny_list_changes_nothing(self):
+        def a(): pass
+        inner = self.Inner([a])
+        p = agent_mod.ToolsExcept(inner, [])
+        assert p.schemas() == [a]
+
+
+class TestOneAgentAtATime:
+    """One agent runs on this machine at a time, whoever starts it — the CLI, the
+    console, or a second tab. Only one chat model stays resident, so two agents would
+    evict each other's model every turn; two on the same name would also fight over
+    one state file. The lock is an OS file lock, so it covers separate processes and
+    is released by the kernel even if the holder is killed."""
+
+    def _second(self, monkeypatch, name, calls):
+        def count(n):
+            calls.append(n)
+            return "x"
+        return _loop(monkeypatch, count, name=name, max_cycles=1)[0]
+
+    def test_a_second_agent_cannot_start_while_one_runs(self, monkeypatch):
+        seen = {}
+
+        def first(n):
+            others = []
+            second = self._second(monkeypatch, "other", others)
+            seen["state"] = second.run()
+            seen["calls"] = list(others)
+            seen["holder"] = agent_mod.running_agent()
+            return "x"
+
+        _loop(monkeypatch, first, name="first", max_cycles=1)[0].run()
+        assert seen["calls"] == []                       # it never ran a cycle
+        assert "already running" in seen["state"].stopped_reason
+        assert "first" in seen["state"].stopped_reason   # and says who
+        assert seen["holder"]["name"] == "first"
+        assert not (agent_mod.AGENT_DIR / "other.state.json").exists()
+
+    def test_a_refused_start_leaves_the_running_agents_stop_file_alone(self, monkeypatch):
+        """Same name twice: the loser must not clear a stop request meant for the winner."""
+        seen = {}
+
+        def first(n):
+            stop_path("same").write_text("stop")
+            self._second(monkeypatch, "same", []).run()
+            seen["stop_kept"] = stop_path("same").exists()
+            return "x"
+
+        _loop(monkeypatch, first, name="same", max_cycles=5)[0].run()
+        assert seen["stop_kept"]
+
+    def test_the_lock_is_released_when_a_run_ends(self, monkeypatch):
+        _loop(monkeypatch, lambda n: "x", name="a", max_cycles=1)[0].run()
+        assert agent_mod.running_agent() is None
+        calls = []
+        self._second(monkeypatch, "b", calls).run()
+        assert calls == [1]
+
+    def test_the_lock_is_released_even_if_the_run_blows_up(self, monkeypatch):
+        loop = _loop(monkeypatch, lambda n: "x", name="a", max_cycles=1)[0]
+        monkeypatch.setattr(loop, "_loop", lambda *a: (_ for _ in ()).throw(KeyError("x")))
+        with pytest.raises(KeyError):
+            loop.run()
+        assert agent_mod.running_agent() is None
+
+    def test_the_lock_spans_processes_and_survives_a_kill_9(self, tmp_path):
+        """What a PID file cannot do. A real second process (standing in for
+        `lag agent start` in another terminal) takes the lock; this process sees it;
+        then the holder is SIGKILLed — no finally, no cleanup — and the kernel has
+        released the lock anyway."""
+        import signal
+        import subprocess
+        import sys
+
+        holder = subprocess.Popen(
+            [sys.executable, "-c",
+             "import sys, time\n"
+             "from pathlib import Path\n"
+             "from lag import agent\n"
+             "agent.AGENT_DIR = Path(sys.argv[1])     # the same dir this test uses\n"
+             "lock, _ = agent._take_run_lock('cli-agent')\n"
+             "print('held', flush=True)\n"
+             "time.sleep(60)\n",
+             str(agent_mod.AGENT_DIR)],
+            stdout=subprocess.PIPE, text=True)
+        try:
+            assert holder.stdout.readline().strip() == "held"
+            seen = agent_mod.running_agent()
+            assert seen["name"] == "cli-agent" and seen["pid"] == holder.pid
+        finally:
+            holder.send_signal(signal.SIGKILL)
+            holder.wait(timeout=10)
+        assert agent_mod.running_agent() is None

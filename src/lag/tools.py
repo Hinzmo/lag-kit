@@ -20,6 +20,8 @@ from html import unescape
 from html.parser import HTMLParser
 from pathlib import Path
 
+from . import netguard
+
 _MEMORY = Path("memory/store.json")
 
 # Two tools leave the machine: web_search (a query to DuckDuckGo) and http_fetch
@@ -323,6 +325,24 @@ def sleep_for(seconds: int) -> str:
 # These exist partly so the model does not reach for run_shell to do routine
 # lookups: a real tool with a capped, structured result is easier for a small
 # model to use correctly than composing find/grep pipelines.
+def _contained(files, base: Path):
+    """Only the matches whose real location is inside `base`.
+
+    A glob is a second way to name files, and it can name ones outside the directory
+    being searched — `..` segments walk up, and a symlink inside `base` points anywhere.
+    Checking the starting directory is not enough: confinement has to be judged on the
+    files actually opened, after resolving, or a search becomes a read of any file on
+    the host. "Search this directory" should mean exactly that, sandbox or not.
+    """
+    root = base.resolve()
+    for f in files:
+        try:
+            f.resolve().relative_to(root)
+        except (ValueError, OSError):
+            continue
+        yield f
+
+
 def find_files(pattern: str = "**/*", path: str = ".", limit: int = 100) -> str:
     """List files matching a glob pattern.
 
@@ -337,7 +357,8 @@ def find_files(pattern: str = "**/*", path: str = ".", limit: int = 100) -> str:
             return f"not a directory: {path}"
 
         def hits(pat: str) -> list[str]:
-            return [str(f) for f in sorted(base.glob(pat)) if f.is_file()][:max(1, limit)]
+            return [str(f) for f in sorted(_contained(base.glob(pat), base))
+                    if f.is_file()][:max(1, limit)]
 
         found = hits(pattern)
         if found:
@@ -372,7 +393,8 @@ def grep_files(pattern: str, path: str = ".", glob: str = "**/*", limit: int = 8
         return f"bad pattern: {e}"
     out: list[str] = []
     try:
-        for f in sorted(Path(path).glob(glob)):
+        base = Path(path)
+        for f in sorted(_contained(base.glob(glob), base)):
             if not f.is_file() or f.stat().st_size > 2_000_000:
                 continue
             try:
@@ -389,6 +411,49 @@ def grep_files(pattern: str, path: str = ".", glob: str = "**/*", limit: int = 8
 
 
 # ── outbound ──────────────────────────────────────────────────────────────────
+def _ssrf_block_reason(url: str) -> str | None:
+    """Why this URL must not be fetched, or None if it is safe to.
+
+    http_fetch runs in THIS host process — not in the agent's container — so a URL the
+    model was tricked into fetching reaches whatever the host can reach: Ollama on
+    localhost, a router on the LAN, a tailnet peer. The rule itself (default-deny,
+    IPv4-in-IPv6 unwrapped) lives in netguard.py, shared with the container's egress
+    proxy so the two cannot drift.
+
+    Known gap here, not in the proxy: this resolves to check and urllib resolves again
+    to connect, so a hostile DNS server could answer differently the second time (DNS
+    rebinding). The proxy closes it by connecting to the vetted address; doing the same
+    here means replacing urllib's connection layer, which is not worth it for a tool
+    that only reads pages.
+    """
+    _, why = netguard.vet(urllib.parse.urlparse(url).hostname or "")
+    return why
+
+
+class _SSRFBlocked(Exception):
+    """A redirect led somewhere _ssrf_block_reason refuses."""
+
+
+class _GuardedRedirect(urllib.request.HTTPRedirectHandler):
+    """Vet every redirect hop, not just the first URL.
+
+    urlopen follows 3xx responses on its own, so checking only the URL the model passed
+    in leaves a one-step bypass: a public page answering `302 Location:
+    http://127.0.0.1:11434/...` turns a vetted request into an unvetted one against the
+    host's own services. redirect_request is urllib's hook that runs before each
+    follow-up request is built, so the check lives there. It also pins redirects to
+    http(s) — the stock handler would follow one to ftp:// as well.
+    """
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        if not re.match(r"^https?://", newurl):
+            raise _SSRFBlocked(f"redirect to {newurl} is not http(s)")
+        blocked = _ssrf_block_reason(newurl)
+        if blocked:
+            raise _SSRFBlocked(f"redirect to {newurl} — {blocked}")
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
 def http_fetch(url: str, max_chars: int = 4000) -> str:
     """Fetch a URL and return its readable text. This leaves the machine.
 
@@ -398,12 +463,18 @@ def http_fetch(url: str, max_chars: int = 4000) -> str:
     """
     if not re.match(r"^https?://", url or ""):
         return "http_fetch error: url must start with http:// or https://"
+    blocked = _ssrf_block_reason(url)
+    if blocked:
+        return f"http_fetch blocked: refusing to fetch a non-public address — {blocked}"
     try:
         req = urllib.request.Request(url, headers={"User-Agent": _UA})
-        with urllib.request.urlopen(req, timeout=_SEARCH_TIMEOUT) as r:
+        opener = urllib.request.build_opener(_GuardedRedirect)
+        with opener.open(req, timeout=_SEARCH_TIMEOUT) as r:
             ctype = r.headers.get("Content-Type", "")
             raw = r.read(2_000_000).decode(r.headers.get_content_charset() or "utf-8",
                                            errors="replace")
+    except _SSRFBlocked as e:
+        return f"http_fetch blocked: refusing to follow a redirect to a non-public address — {e}"
     except urllib.error.HTTPError as e:
         return f"http_fetch error: HTTP {e.code} for {url}"
     except Exception as e:  # noqa: BLE001

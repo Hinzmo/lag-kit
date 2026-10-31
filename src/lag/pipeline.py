@@ -70,7 +70,8 @@ class Pipeline:
         tags = [s.model for s in self.stages]
         if not tags:
             return 0
-        return 1 + sum(1 for a, b in zip(tags, tags[1:]) if a != b)
+        # Pairwise, so the operands differ in length by one by design.
+        return 1 + sum(1 for a, b in zip(tags, tags[1:], strict=False) if a != b)
 
     @classmethod
     def routed(cls, task: str, cfg: dict, tool_provider=None,

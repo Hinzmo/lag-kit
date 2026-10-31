@@ -1,0 +1,6 @@
+{
+  "name": "lag-console-tests",
+  "private": true,
+  "description": "jsdom harness for the console boot test. Run: npm install && node console_boot.js",
+  "dependencies": { "jsdom": "^24.0.0" }
+}

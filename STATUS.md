@@ -1,28 +1,42 @@
 # local-agent-kit v2 — status
 
-Last updated **2026-08-20**. This is the living status doc: what works, how it works, and
+Last updated **2026-10-29**. This is the living status doc: what works, how it works, and
 what's left. `MORNING_BRIEF*.md` and `REBUILD_COMPLETE.md` are historical — trust this file
-for current state.
+for current state. Working rules for Claude Code live in `CLAUDE.md`.
 
 ---
 
 ## Where it stands
 
-All six phases run and are smoke-tested. **105 tests passing.** Primary box is now the
-**MacBook Air M4** (ported 2026-08-21); the CPU-only Ubuntu machine it was built on is
-secondary. On the Mac, both the direct and `--mcp` tool paths are verified end to end.
+The six original phases are done, and the kit has grown well past them. **334 tests pass,
+2 skip** (the skips need Docker Desktop running). Primary box is the **MacBook Air M4**;
+the CPU-only Ubuntu machine it was built on is secondary.
 
 | Phase | What | State |
 |------:|------|-------|
 | 0 | Foundation, config, packaging | ✅ |
-| 1 | ReAct loop over Ollama, 8 local tools | ✅ verified |
+| 1 | ReAct loop over Ollama, local tools | ✅ verified |
 | 2 | MCP server (stdio) wrapping those tools | ✅ verified |
 | 3 | The bridge — harness as MCP client | ✅ verified |
-| 4 | Project pipeline (sequential, context passed down) | ✅ verified |
+| 4 | Project pipeline (sequential, orchestrator-routed) | ✅ verified |
 | 5 | Nine personas | ✅ all load |
 | 6 | RAG server + always-on retrieval | ✅ verified |
 
-Repo: `github.com/Hinzmo/local-agent-kit` (private), branch `main`.
+Since Phase 6:
+
+| Feature | Command | State |
+|---------|---------|-------|
+| Live web console (streaming thinking, tokens, tool calls) | `lag serve` | ✅ wired to the real harness |
+| Agent mode — saved agents that loop on a goal | `lag agent …` | ✅ |
+| Container sandbox for agents (mandatory) | — | ✅ needs Docker running |
+| Study mode — ask/quiz over your own course notes | `lag study …` | ✅ |
+| Readable output (`render.py`) | — | ✅ |
+| SSRF guard on `http_fetch` | — | ✅ |
+
+**In flight:** branch `feat/sandboxed-agents`, open as **PR #7** — container sandbox,
+public-only egress proxy for agents, SSRF guard, console layout, and these doc refreshes.
+
+Repo: `github.com/Hinzmo/local-agent-kit` (private), default branch `main`.
 
 ---
 
@@ -32,220 +46,187 @@ Three decoupled layers. The harness is the only piece that knows about the other
 
 ```
 Ollama (local LLM)  ──tools ↓ / tool_calls ↑──  Harness (lag)  ──stdio · JSON-RPC──  MCP servers
-                                                 ReAct loop                           tools_server.py  (8 tools)
+                                                 ReAct loop                           tools_server.py  (16 tools)
                                                  + MCP client                         rag_server.py    (1 tool)
 ```
 
 ### The one abstraction that matters: `tool_provider`
 
 `OllamaClient.run` accepts anything exposing `schemas()` and `call(name, args)`.
-`LocalToolProvider` (in-process) and `MCPToolProvider` (real server subprocess) both satisfy
-it, so `lag run` and `lag run --mcp` exercise identical tools over different transports with
-zero change to the loop. **Preserve this.** An `if mcp:` branch inside `OllamaClient` is the
-wrong layer.
+`LocalToolProvider` (in-process) and `MCPToolProvider` (real server subprocesses) both
+satisfy it, so `lag run` and `lag run --mcp` exercise identical tools over different
+transports with zero change to the loop.
 
-### One implementation, two consumers — twice
+Everything that sits in front of the tools — allow-lists, deny-lists, keeping goal tools
+in-process, the sandbox — is a **wrapper** around a provider (`providers.py`,
+`sandbox.py`), so they compose and the loop never knows which are present.
 
-The same rule applies in two places now:
+### Tools
 
-- **Tools.** The eight functions in `src/lag/tools.py` are consumed unchanged by Ollama's
-  schema generation *and* by FastMCP in `servers/tools_server.py`. Adding a tool means: write
-  the typed function with an `Args:` docstring, add it to `TOOLS`, add it to the tuple in
-  `tools_server.py`. Nothing gets duplicated into the server.
-- **Retrieval.** `src/lag/rag.py` holds chunking, embedding, and the ChromaDB collection.
-  `servers/rag_server.py` is now just the protocol wrapper and CLI, and `tools.remember`
-  imports the same core. This moved out of the server precisely because `remember` became a
-  second consumer.
+Sixteen functions in `src/lag/tools.py`, consumed unchanged by Ollama's schema generation
+*and* by `servers/tools_server.py` (which imports the `TOOLS` dict):
 
-### Memory is now two-layered
+| Group | Tools |
+|-------|-------|
+| Files & shell | `read_file`, `write_file`, `list_dir`, `find_files`, `grep_files`, `run_shell`, `system_info` |
+| Memory | `remember`, `recall` |
+| Web (leaves the machine) | `web_search`, `http_fetch` |
+| Time | `now`, `sleep_for` |
+| Agent goal control | `goal_status`, `note_progress`, `mark_done` |
 
-`remember(key, value)` writes to **both**:
+`rag_server.py` adds `search_knowledge_base`, so `--mcp` exposes 17. Tool errors come back
+to the model as strings, never raised.
 
-1. `memory/store.json` — exact-key lookup via `recall`.
-2. The ChromaDB collection — embedded, so it comes back from a *plain question*.
+### Memory is two-layered, retrieval is always on
 
-That second path is what makes the kit accumulate knowledge. A fact only `recall` can reach
-is a fact the model has to already know it stored. Indexing is the default, not a flag.
-Remembered chunks carry `kind: "memory"` and surface tagged `· remembered` in search results.
+`remember(key, value)` writes to `memory/store.json` (exact lookup via `recall`) **and**
+embeds into ChromaDB, so it comes back from a plain question. Documents and remembered
+facts share one collection and one ranking; every turn searches it first. Indexing degrades
+safely without `chromadb` or an embedder. `src/lag/rag.py` holds the retrieval core;
+`rag_server.py` is just the protocol wrapper.
 
-Indexing degrades safely: no `chromadb` or no embedder means the key/value write still
-happens and the return string says why indexing was skipped. A core install never breaks.
+### Live streaming
 
-### Retrieval is always on
+`on_event` is a side channel on `OllamaClient.run` / `Pipeline.run` — same return value
+with or without it. The console's `/api/stream` (POST → `text/event-stream`) forwards
+`stage`, `thinking`, `token`, `tool`, `tool_result`, `done` and `error` events. `render.py`
+cleans tool-call JSON and fumbled tool calls once, upstream, so chat, activity window and
+CLI all show the same readable text.
 
-There is no "RAG mode". Every turn searches the store first. Documents and remembered facts
-share one collection and one ranking.
+### Pipeline
 
-### Context window — read this before tuning anything
+Sequential stages, each seeing the context above it. By default the orchestrator **routes**
+— picks which personas the task needs; `--agents` / `--no-route` override. The lead plans
+once and its instructions ride down. `parallel` and `crew` were removed (see *One model at
+a time*).
 
-Ollama **ignores a model's trained context** and allocates 4096 by default. `ornith:latest`
-is trained for 262144, so leaving it unset runs the harness at 1/64th of its window and
-silently drops the oldest tokens. The symptom is a model that "forgets" the top of its own
-conversation — never an error.
+### Agent mode
 
-`config.yaml → ollama.num_ctx` is wired through `OllamaClient.from_config` to both the CLI and
-every pipeline stage, and `ollama.num_ctx_by_model` overrides it per tag. Measured on the M4:
-num_ctx is a **memory dial, not a speed dial** — raising it left generation (~19 tok/s) and
-load time flat; only the footprint (weights + KV pre-allocated at load) grew. *Filling* the
-window is the part that costs, since prefill tracks tokens actually used.
+One persona, one goal, a loop until `mark_done` — with `--max-cycles` and a stop file as
+backstops. Each cycle is a fresh turn; the goal, the `note_progress` log and the last
+observation are the continuity. Exceptions become observations, never crashes. Files live
+in `agents/`: `<name>.yaml` (definition), `<name>.state.json` (run state), `<name>.stop`,
+and `workspaces/`.
 
-Re-measured 2026-09-07 on the current pair:
+### Sandbox — agents only, mandatory
+
+Agent shells run in a Docker/Podman container:
+
+- project mounted **read-only** at `/project`, writable workspace at `/workspace`
+- all capabilities dropped, 256-pid limit, 2 GB memory (swap capped at the same 2 GB),
+  2 CPUs, no published ports
+- **network on by default = public internet only**, through a per-agent filtering proxy
+  (`egress.py`) on an `--internal` Docker network: the host, LAN and tailnet are refused,
+  raw sockets have no route; `--no-network` / `network: false` seals an agent
+- **fails closed** — no running container runtime, no agent run
+
+Host-side file tools are path-translated and write-checked in Python. The command
+deny-list is defence in depth, not the boundary. Supervised `lag run` / `pipeline` are
+**not** sandboxed (deliberate; see *What's left*).
+
+### Study mode
+
+`lag study add | ask | quiz | cards | review | status`. Each course is its own Chroma
+collection; `ask` answers with citations from your notes, `quiz` grades free-text answers
+strictly against the source. PDFs need the `[study]` extra (`pypdf`).
+
+---
+
+## Context window and model residency
+
+Ollama **ignores a model's trained context** and allocates 4096 by default, silently
+dropping the oldest tokens. `ollama.num_ctx` and `ollama.num_ctx_by_model` in
+`config.yaml` are applied via `OllamaClient.from_config`.
+
+Measured 2026-09-07 on the M4 (weights + KV):
 
 | num_ctx | `ornith:latest` | `qwen3:8b` | note |
 |--------:|----------------:|-----------:|------|
-| 8192 | 5.48 GB | 6.18 GB | **qwen3:8b runs here** — it does the bulk of the work |
+| 8192 | 5.48 GB | 6.18 GB | **qwen3:8b runs here** |
 | 16384 | 6.35 GB | 7.41 GB | |
-| 32768 | 6.40 GB | 9.91 GB | qwen3:8b's KV gets expensive fast |
-| 40960 | — | 11.16 GB | qwen3:8b's trained max, and its practical ceiling |
+| 32768 | 6.40 GB | 9.91 GB | **ornith runs here** |
+| 40960 | — | 11.16 GB | qwen3:8b's trained max |
 | 65536 | 7.64 GB | — | |
-| 131072 | 10.12 GB | — | **ornith runs here** — 16× the window for less than qwen3:8b@32768 |
+| 131072 | 10.12 GB | — | tried and dropped |
 
-Because only one model is resident at a time, each is sized on its own terms instead of being
-pinned to the smaller one's ceiling. **Current setting: ornith 32768, qwen3:8b 8192.**
+**num_ctx is a memory dial, not a speed dial.** Across ornith at 8192 / 32768 / 131072,
+load was 8.40s / 5.38s / 6.39s and generation 13.6 / 15.4 / 15.3 tok/s — flat. 131072 was
+dropped because `Pipeline._brief` is bounded to fit the 8192 stage that reads it, so the
+extra width bought nothing.
 
-131072 was tried and dropped. It is not a speed question — measured on ornith at
-8192 / 32768 / 131072, load was 8.40s / 5.38s / 6.39s and generation 13.6 / 15.4 / 15.3 tok/s,
-i.e. flat, so dialling the window *down* buys memory back and nothing else. It was dropped
-because 10.12 GB bought headroom the pipeline cannot use: `Pipeline._brief` is bounded to fit
-the 8192 stage that reads it, since a plan too wide for the next stage is truncated
-**silently**, not rejected.
+**Thinking is what costs time.** A one-stage run answering `1 2 3` emitted 140 thinking
+tokens against 5 answer tokens. Persona `thinking_mode` is wired to `ollama.chat(think=…)`,
+and `num_predict: 2048` caps a turn (thinking included) so a spiralling stage fails fast.
 
-**What actually costs time is thinking, not context.** ornith has it enabled natively, and
-streaming makes the ratio visible: a one-stage run answering `1 2 3` emitted 140 thinking
-tokens against 5 answer tokens; a two-stage run, 502 against 187. That is the lever worth
-pulling if runs feel slow.
+### One model at a time
 
-### One model at a time (measured 2026-09-07)
-
-Ollama on this box holds exactly **one** chat model resident, and that is a hard concurrency
-cap — *not* a memory ceiling. Probed at num_ctx 4096 / 6144 / 8192, loading a second model
-evicted the first every time while the total sat at ~5.9 GB of 16 GB. Lowering num_ctx buys
-nothing; two chat models simply cannot co-reside here.
-
-Every switch therefore costs a full cold reload — measured `ornith` 5.7–6.4s, `qwen3:8b`
-4.4–4.9s. That single fact drove three decisions:
-
-1. **`parallel` mode was deleted.** Firing agents concurrently across two tags makes them evict
-   each other in a loop — strictly slower than sequential.
-2. **`crew` mode was deleted.** Its coordinator bookended the run and the return trip to
-   synthesize cost a second reload for nothing.
-3. **Every downstream role shares one tag** (`qwen3:8b`), so consecutive pipeline stages reuse
-   the resident weights; only the lead's `ornith` costs a load.
-
-`max_loaded_models: 2` is advisory here — the server caps at 1 regardless. Enforce for real with
-`OLLAMA_MAX_LOADED_MODELS`. The narrow working window is covered by offloading state to memory:
-`remember` writes into ChromaDB, `search_knowledge_base` reads it back. To give the lead that
-loop, run with `--mcp` (`lag pipeline "..." --mcp`), which backs every stage with both MCP
-servers instead of only in-process tools.
-
-Verified live: `lag pipeline "..." --agents architect_agent,dev_agent` completes in ~70s
-including both cold loads, and the downstream stage visibly works from the lead's plan.
+Ollama here holds exactly **one** chat model resident — a hard cap, not a memory limit (a
+second model evicted the first at ~5.9 GB of 16 GB). Every switch is a cold reload
+(`ornith` 5.7–6.4s, `qwen3:8b` 4.4–4.9s). That drove three decisions: `parallel` mode
+deleted (agents evicting each other), `crew` mode deleted (an extra reload for the
+coordinator's return trip), and every downstream role shares one tag.
 
 ---
 
-### Models live in exactly one place
+## Models (Mac M4 — primary)
 
-Personas name a **role**, not a model:
+Personas name a **role**; `config.yaml → models:` is the only place tags live.
 
-```yaml
-# personas/dev_agent.yaml
-model: coder        # resolves through config.yaml → models.coder
-```
+| Role | Tag | num_ctx | Personas |
+|------|-----|--------:|----------|
+| `orchestrator` | `ornith:latest` | 32768 | architect, senior_dev |
+| `worker` | `qwen3:8b` | 8192 | analyst, biz_analyst, design, research |
+| `coder` | `qwen3:8b` | 8192 | dev, tester, dev_research |
+| `fast` | `qwen3:8b` | 8192 | unassigned |
+| `embed` | `nomic-embed-text` | — | retrieval only (768-dim) |
 
-So swapping a model is one line in `config.yaml` and every agent on that role
-follows — no persona edits — and each machine runs its own model set from the same
-personas. A literal tag (`qwen3.5:4b`) still passes through untouched. A mistyped role
-fails immediately at load with the valid roles listed, rather than as a confusing 404
-from Ollama mid-run.
-
-| Role | Personas on it |
-|------|----------------|
-| `orchestrator` | architect_agent, senior_dev_agent |
-| `coder` | dev_agent, tester_agent, dev_research_agent |
-| `worker` | analyst_agent, biz_analyst_agent, design_agent, research_agent |
-| `fast` | unassigned — free for short/cheap calls |
-| `embed` | retrieval only, never a chat model |
-
-**Adding a model:** `ollama pull <tag>`, then point a role at it in `config.yaml`. That's
-the whole procedure.
-
-## Mapped models (Mac M4 — primary)
-
-| Role | Tag | num_ctx | Notes |
-|------|-----|--------:|-------|
-| `orchestrator` | `ornith:latest` | 32768 | 9B qwen3.5, tools+thinking; plans once per run |
-| `worker` | `qwen3:8b` | 8192 | analyst / biz_analyst / design / research |
-| `coder` | `qwen3:8b` | 8192 | dev / tester / dev_research — same tag, so no reload |
-| `fast` | `qwen3:8b` | 8192 | unassigned, free for cheap calls |
-| `embed` | `nomic-embed-text` | — | 768-dim embeddings, ~0.37 GB |
-
-Remapped after an Ollama cleanup removed `qwen3:14b`, `qwen2.5-coder:7b`, `llama3.2:3b` and
-`qwen3:4b`. **Role models must support tools** — the loop is a tool-calling loop, so a
-completion-only model fails at run time. Still installed but unmappable for that reason:
-`example/completion-only-8b` and `example/completion-only-mini` (completion only).
-`persona-model:latest` does support tools but ships a baked-in persona that fights the persona
-system prompts. `example/llama-3.1-8b-instruct` supports tools but is a rough
-IQ3_M quant.
+The default roster (architect → dev → senior_dev) pays three loads; move `senior_dev_agent`
+to `coder` for two. Tool support is **discovered** per tag via Ollama, not hardcoded; a
+completion-only model runs without tools and emits a `no_tools` event. Installed but not
+mapped: `example/completion-only-8b`, `example/completion-only-mini`
+(completion-only), `persona-model:latest` (baked-in persona), `example/llama-3.1-8b-…`
+(rough IQ3_M quant), plus `gemma-4-e2b-aiops`, `qwen3.5:4b` and an `ornith:9b`
+alias of `ornith:latest`.
 
 ---
 
-## Commands
+## Setup and commands (Mac)
 
-Mac (primary). The `env -u` prefixes are Ubuntu-only — see *Environment traps*.
+1. `git clone git@github.com:Hinzmo/local-agent-kit.git && cd local-agent-kit`
+2. `/opt/homebrew/bin/python3.12 -m venv .venv` — **3.12, not the default `python3`**
+   (macOS 3.14 has no `chromadb` wheel). `brew install python@3.12` if missing.
+3. `.venv/bin/python -m pip install -e ".[dev,rag,web,study]"`
+4. `cp config.example.yaml config.yaml`, then map the five roles to tags from `ollama list`.
+5. `ollama pull nomic-embed-text`, then `.venv/bin/python servers/rag_server.py --ingest docs/`
+6. Start **Docker Desktop** if you want agent mode (and the 2 sandbox tests).
+7. `.venv/bin/python -m pytest` — expect 431 passing with Docker running; without it, 4 real-container tests skip.
+   `cd tests/js && npm install` enables the console boot test.
 
 ```bash
-/opt/homebrew/bin/python3.12 -m venv .venv          # 3.14 lacks chromadb wheels
-.venv/bin/python -m pip install -e ".[dev,rag]"
-
 .venv/bin/lag run "what is this project?"
 .venv/bin/lag run "same thing" --mcp
 .venv/bin/lag pipeline "design a url shortener"
-
-.venv/bin/python servers/rag_server.py --ingest docs/
-.venv/bin/python servers/tools_server.py            # standalone, real tracebacks
-.venv/bin/python -m pytest                           # 105 passing
+.venv/bin/lag serve                      # console at http://127.0.0.1
+.venv/bin/lag agent new                  # then: list | start | status | stop
+.venv/bin/lag study add <course> <path>
+.venv/bin/python servers/tools_server.py # standalone, real tracebacks
 ```
 
----
+Run everything from the repo root — `.chroma`, `agents/`, `study/` and `memory/` resolve
+relative to cwd. All of them are gitignored and per-machine; remembered facts do not sync
+between boxes, by decision.
 
-## Setting up the Mac (M4)
+### Dependencies
 
-The repo carries everything except per-machine config, which is gitignored by design.
+`pyproject.toml` is the single source of truth — there is no `requirements.txt`.
 
-1. `git clone git@github.com:Hinzmo/local-agent-kit.git && cd local-agent-kit`
-2. `/opt/homebrew/bin/python3.12 -m venv .venv && .venv/bin/python -m pip install -e ".[dev,rag]"`
-   — **use 3.12, not the default `python3`**: macOS ships 3.14, which has no `chromadb` wheel
-   yet, so the `[rag]` install fails on it. No `env -u` dance needed; the snap traps are
-   Ubuntu-only. `brew install python@3.12` if it's missing.
-3. `cp config.example.yaml config.yaml`
-4. `ollama pull` the models you want, then **edit `config.yaml`**:
-   - the M4 handles a larger orchestrator comfortably — `qwen3:14b` was the original intent
-   - raise `num_ctx` to 16384–32768; unified memory makes this cheap
-5. **Personas need no edits** — they name roles, so just point the five roles in
-   `config.yaml` at whatever you pulled. `ollama list` gives the exact tags.
-6. `ollama pull nomic-embed-text`, then `python servers/rag_server.py --ingest docs/`
-7. `pytest` — expect 105 passing.
-
-`.chroma/` and `memory/` are gitignored, so **remembered facts do not sync between machines.**
-Each box accumulates its own memory. See *What's left* if you want that shared.
-
----
-
-## Environment traps (Ubuntu box only)
-
-These cost about an hour of misdiagnosis. Check `env | grep -E '^(PIP_|PYTHON)'` before
-debugging any "installed but not importable" problem.
-
-- **`PIP_PREFIX=/home/hinzmo/snap/claude-code/common` is exported globally** by snap
-  confinement. It silently redirects every `pip install` *out of any venv* — installs report
-  success and imports still fail.
-- `PYTHONPATH` points at snap site-packages and shadows the venv.
-- The original `.venv` was built for **Python 3.14** on the previous machine; this box has
-  3.12, so its `site-packages` was invisible. Rebuilt against 3.12.
-- `python3-venv` isn't installed and `/usr/bin/python3` has no `pip` — the venv was
-  bootstrapped with `--without-pip` + `get-pip.py`.
-- `ssh`, `~/.ssh`, `ollama`, `curl`, and `unzip` are unreachable from the sandbox. Use `gh`,
-  the Ollama HTTP API, and Python's stdlib.
+| Extra | Packages | Needed for |
+|-------|----------|------------|
+| core | `ollama`, `mcp`, `pyyaml`, `typer` | `lag run`, `pipeline`, `agent` |
+| `rag` | `chromadb` | retrieval, memory indexing |
+| `web` | `fastapi`, `uvicorn` (pulls `pydantic`) | `lag serve`, `tests/test_web.py` |
+| `study` | `pypdf` | PDF material in `lag study` |
+| `dev` | `pytest`, `httpx`, `ruff` | tests, lint |
 
 ---
 
@@ -253,67 +234,85 @@ debugging any "installed but not importable" problem.
 
 Every one of these was found by running the code, not reading it.
 
-1. **`--mcp` hung.** The server was spawned as bare `"python"`, absent on Ubuntu; it died on
-   import and `stdio_client` waited forever on a silent pipe. Now `sys.executable`, with the
-   server path resolved against the repo root.
-2. **`mcp 2.0.0` renamed `FastMCP`** → `mcp.server.mcpserver.MCPServer`. Both servers import
-   either.
-3. **`mcp 2.0.0` renamed `Tool.inputSchema`** → `input_schema`, breaking the bridge's schema
-   translation. Read through a helper accepting both.
-4. **`chunk_text` never terminated.** On the final chunk `start` rewound to `end - overlap`,
-   still below the text length, so it re-emitted the same tail until memory ran out. Every
-   ingest would have hung.
-5. **RAG server printed to stdout**, which *is* the JSON-RPC channel under stdio — corrupting
-   the stream and breaking `initialize`. Moved to stderr.
-6. **`.gitignore` was silently broken.** Git has no inline comments, so
-   `config.yaml   # per-machine` was one long pattern matching nothing. `config.yaml` and
-   `.chroma/` were never actually ignored.
-7. **Chunk IDs collided.** Ingest used `chunk_0..N`, so a second ingest overwrote the first,
-   and `remember` would have clobbered whatever shared its index. Now content-addressed
-   (SHA-1 prefix) and namespaced per writer, which also makes re-adding idempotent.
-8. **`num_ctx` was never set** — see above.
-9. **UI: full-screen flicker.** A literal `@keyframes flick` overlay plus `mix-blend-mode`
-   over a 60fps canvas plus a non-DPR-backed canvas moiréing against the scanlines.
+1. **`--mcp` hung** — server spawned as bare `"python"`; now `sys.executable`.
+2. **`mcp 2.0.0` renamed `FastMCP`** → `MCPServer`, and **`Tool.inputSchema`** →
+   `input_schema`. Both spellings handled.
+3. **`chunk_text` never terminated** on its final chunk; every ingest would have hung.
+4. **RAG server printed to stdout**, corrupting the stdio JSON-RPC channel.
+5. **`.gitignore` inline comments** made `config.yaml` and `.chroma/` patterns match nothing.
+6. **Chunk IDs collided** (`chunk_0..N`); now content-addressed and namespaced.
+7. **`num_ctx` was never set**, running every model at 4096.
+8. **UI full-screen flicker** from a keyframe overlay + blend mode over a 60fps canvas.
+9. **`MCPBridge` leaked** server subprocesses and threads — *this entry used to claim a
+   fix that hadn't happened; see #19.* (The console caches its provider rather than
+   closing one per run, and `close()` itself only worked by accident.)
+10. **Console failed to boot** on a dead `MODELS` reference — now covered by a jsdom boot test.
+11. **Dead-code cleanup deleted live chat plumbing** (send path, `Tps`/`loadModel`) —
+    restored, with a test that drives a full turn.
+12. **`max_cycles` backstop was off**, and the deny-list's `| sh` rule fired on `| sha256sum`
+    — both corrected.
+13. **Agent-run output got committed** — a URL-shortener demo left `main.py` and
+    `shortener/` in the repo root. Removed; agents now write only their own workspace.
+14. **The deny-list matched substrings** — #12 fixed one rule, the rest kept the flaw:
+    `rm -rf /workspace/build` contained `rm -rf /`, `grep shutdown log.txt` contained
+    `shutdown`, while `rm -r -f /` slipped past. It now parses the command (`shlex`) and
+    judges the program and its arguments; quoted text and heredoc bodies are data.
+15. **Agents couldn't write a file the project also had** — a relative write fell back to
+    the read-only project and was refused forever. Writes now always land in the
+    workspace; reads still fall back (copy-on-write).
+16. **A resumed agent past its cap never ran again** — `max_cycles` was compared to the
+    lifetime cycle count, so every restart stopped before cycle 1, with no reason given.
+    The cap is now per run; resumes also reset the breakers and the last stop reason.
+17. **The console's agent form couldn't save** — its default `0` cycles was sent as `null`
+    (422, shown as "saved as undefined"), and since saving *replaced* the definition,
+    every field the form lacks reset on re-save: network back on, a disabled agent
+    re-enabled, description and workspace wiped. Saves now merge; the form has a
+    network checkbox; refusals say why. `tests/js/agent_form.js` drives the real form.
+18. **Two agents could run at once** — the web server checked `_RUNNING` in the request
+    but added to it in the worker thread, so two quick starts both passed, and the CLI
+    was invisible to it entirely. Now one agent per machine: an `flock` in
+    `AgentLoop.run` (cross-process, released by the kernel on any exit), a claim under a
+    lock in the server (409), and greyed-out start controls in the console. Also fixed:
+    Cmd+Enter both saved and started, and Enter on a focused button started an agent.
+19. **MCP teardown, for real** — `close()` exited the SDK's context managers from a
+    different task than entered them; anyio raised on both, `close()` swallowed it, and
+    the server died only because the SDK killed it first. Nothing called `close()`
+    anyway. The live leak was the failure path: when a later server failed to start,
+    `from_config` orphaned the earlier one and its thread — measured 1, 2, 3 orphans over
+    three retries, and the console retries per request. Now the session lives in one
+    task, `from_config` is all-or-nothing, the CLI and web server close what they build,
+    and errors arrive unwrapped from anyio's `ExceptionGroup`.
 
 ---
 
 ## What's left
 
-**~~Wire both MCP servers into the harness.~~ Done.** `MCPToolProvider.from_config` now spawns
-both `tools_server.py` and `rag_server.py`; the provider holds a list of bridges, merges their
-schemas into one flat toolset (first server wins a name collision), and routes each `call()`
-to the owning bridge. The agent loop was untouched. Verified live: `lag run "...search the
-knowledge base..." --mcp` spawns the RAG server and the model calls `search_knowledge_base`.
-So "always-on retrieval" is now true in `lag run --mcp`, not just in direct calls.
+- **Merge PR #7** (`feat/sandboxed-agents`).
+- **Supervised `run_shell` is unsandboxed** — `shell=True`, no path allow-list, 60s timeout.
+  Accepted on a single-user box; only agent mode is confined. Revisit before anything
+  multi-user.
+- **cwd dependence.** `.chroma`, `agents/`, `study/` and `memory/` resolve relative to cwd,
+  so running `lag` outside the repo root points at empty state. Fix: resolve against the
+  repo root.
+- **Two tools leave the machine**: `web_search` (DuckDuckGo HTML scrape — will break if
+  their markup changes; parser pinned by captured-page tests) and `http_fetch` (SSRF-guarded,
+  default-deny: only public addresses, embedded IPv4 unwrapped, every redirect re-checked;
+  DNS rebinding remains a documented gap). Both keyless and
+  stdlib-only.
+- **Agent shells reach the public internet by default** (through the egress proxy), so
+  download-and-run from the internet is possible by design. Seal an agent with
+  `network: false`. Outside names do not resolve inside the container at all (measured on
+  the internal network), so DNS is not an exit either; only the proxy resolves.
+- **Watch `mcp` upgrades.** Venv is on mcp 2.3.0 (upgraded 2026-10-29, suite green); the SDK
+  has renamed APIs the kit uses before, so re-run the suite after any bump.
 
-**`lag run --mcp` must be invoked from the repo root.** The RAG server resolves its store as
-`./.chroma` relative to cwd, so running the harness from elsewhere points it at a missing/empty
-collection (the tools server is unaffected — its tools take explicit paths). Small follow-up:
-resolve `DB_PATH` against the repo root, or pass `cwd` through `StdioServerParameters`.
+---
 
-**`MCPBridge` never shuts down.** No `close()`, so the subprocess and its daemon event loop
-leak for the process lifetime — and it's **two** subprocesses now that both servers spawn.
-Fine for one-shot CLI runs, wrong for anything long-lived; the clean fix is keeping the whole
-run inside `async with` blocks.
+## Environment traps (Ubuntu box only)
 
-**`thinking_mode` in personas is metadata only** — parsed, never passed to
-`ollama.chat(think=...)`. Roughly two lines in `ollama_client.py`.
-
-**`run_shell` is unsandboxed** — `shell=True`, no path allow-list, 60s timeout. Now
-demonstrably live: a crew run wrote two real files into the repo root unprompted. Accepted
-risk on a single-user offline box; revisit before anything multi-user.
-
-**`web_search` leaves the machine.** It's the one tool that does — the query goes to
-DuckDuckGo. Keyless and stdlib-only, so no account and no new dependency, but worth knowing
-it's the single exception to "your data never leaves the machine". It also scrapes an HTML
-endpoint, so it will break if DuckDuckGo changes markup; the parser is pinned by tests that
-use a captured page, not the network.
-
-**Memory is per-install, by decision.** `.chroma/` and `memory/` stay gitignored and each
-machine grows its own. Facts a box learns are usually *about* that box — its hardware limits,
-its model set, what's been run there — so syncing them would import claims that are false on
-the other machine. Not a gap to close; if a fact genuinely belongs everywhere, it goes in a
-committed doc and gets ingested on both.
-
-**The UI is a mockup.** `ui/console.html` is scripted playback, wired to nothing. It reflects
-real project data (models, personas, tool registry, context size) but no live process.
+- **`PIP_PREFIX=/home/hinzmo/snap/claude-code/common`** is exported globally by snap and
+  redirects every `pip install` out of any venv; `PYTHONPATH` shadows the venv. Prefix
+  commands with `env -u PIP_PREFIX -u PYTHONPATH -u PIP_BREAK_SYSTEM_PACKAGES`.
+- `python3-venv` isn't installed; bootstrap with `--without-pip` + `get-pip.py`.
+- `ssh`, `~/.ssh`, `ollama`, `curl` and `unzip` are unreachable from the snap. Use `gh`, the
+  Ollama HTTP API, and Python's stdlib.

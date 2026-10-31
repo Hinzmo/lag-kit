@@ -1,12 +1,23 @@
 """`lag` command-line interface."""
 from __future__ import annotations
 import typer
-
+from pathlib import Path
+from .agent import AGENT_DIR
 from .config import load_config
 from .ollama_client import OllamaClient
 from .tools import LocalToolProvider
 
 app = typer.Typer(help="local-agent-kit \u2014 offline multi-agent harness over Ollama.")
+
+
+def _close(provider) -> None:
+    """Close a provider this command built. An MCP provider owns two server
+    subprocesses and their threads; the in-process one owns nothing. Exiting the
+    process would reap the servers anyway (their stdin hits EOF) — but only by
+    accident, and not at all if this code ever runs inside something long-lived."""
+    close = getattr(provider, "close", None)
+    if close:
+        close()
 
 
 @app.command()
@@ -25,8 +36,11 @@ def run(
     else:
         provider = LocalToolProvider()
 
-    client = OllamaClient.from_config(cfg, model)
-    print(client.run(prompt, tool_provider=provider))
+    try:
+        client = OllamaClient.from_config(cfg, model)
+        print(client.run(prompt, tool_provider=provider))
+    finally:
+        _close(provider)
 
 
 @app.command()
@@ -55,17 +69,20 @@ def pipeline(
         from .mcp_client import MCPToolProvider
         provider = MCPToolProvider.from_config(cfg)
 
-    if route and not agents:
-        typer.echo("[pipeline] routing — the orchestrator is choosing the team …")
-        pipe = Pipeline.routed(task, cfg, provider)
-        typer.echo(f"[pipeline] chose: {', '.join(a.name for a in pipe.stages) or '(none)'}")
-    else:
-        agents = agents or cfg.get("pipeline", {}).get(
-            "default_agents", "architect_agent,dev_agent,senior_dev_agent"
-        )
-        pipe = Pipeline.from_personas([a.strip() for a in agents.split(",")], cfg, provider)
-    typer.echo(f"[pipeline] {len(pipe.stages)} stage(s) · {pipe.loads()} model load(s)")
-    print(pipe.run(task, plan=plan))
+    try:
+        if route and not agents:
+            typer.echo("[pipeline] routing — the orchestrator is choosing the team …")
+            pipe = Pipeline.routed(task, cfg, provider)
+            typer.echo(f"[pipeline] chose: {', '.join(a.name for a in pipe.stages) or '(none)'}")
+        else:
+            agents = agents or cfg.get("pipeline", {}).get(
+                "default_agents", "architect_agent,dev_agent,senior_dev_agent"
+            )
+            pipe = Pipeline.from_personas([a.strip() for a in agents.split(",")], cfg, provider)
+        typer.echo(f"[pipeline] {len(pipe.stages)} stage(s) · {pipe.loads()} model load(s)")
+        print(pipe.run(task, plan=plan))
+    finally:
+        _close(provider)
 
 
 @app.command()
@@ -109,7 +126,9 @@ def agent_start(
     constraints: str = typer.Option("", help="What it must not do."),
     persona: str = typer.Option("dev_agent", help="Which persona drives the loop."),
     interval: int = typer.Option(0, help="Seconds to pause between cycles (0 = flat out)."),
-    max_cycles: int = typer.Option(0, help="Stop after this many cycles (0 = until done)."),
+    max_cycles: int = typer.Option(20, help="Hard cap on cycles per run (a resume gets a fresh budget); 0 = run until done or stopped."),
+    network: bool = typer.Option(True, "--network/--no-network",
+        help="Give the agent's shell the public internet via a filtering proxy (pip/git/curl); never the host or LAN. --no-network seals it."),
     name: str = typer.Option("default", help="Run name; also the state and stop file name."),
     max_failures: int = typer.Option(5, help="Stop after this many CONSECUTIVE failed cycles (0 = never)."),
     max_idle: int = typer.Option(5, help="Stop after this many consecutive cycles that call no tool and note no progress (0 = never)."),
@@ -117,11 +136,13 @@ def agent_start(
 ):
     """Set a goal and let the agent work it until done, capped, or stopped.
 
-    With no --goal this walks the wizard. Agent mode runs with FULL autonomy — the
-    same unsandboxed shell and filesystem the rest of the CLI has — so read the goal
-    back before confirming, and remember `lag agent stop` exists.
+    With no --goal this walks the wizard. The agent's shell runs inside a container
+    (not configurable — see sandbox.py): it may read this project read-only and write
+    only its own workspace, with no access to the host machine or LAN. Its shell gets the
+    public internet by default, through a filtering proxy, for pip/git/curl; pass
+    --no-network to seal a given agent.
     """
-    from .agent import AgentLoop, GoalSpec, stop_path
+    from .agent import GoalSpec
 
     cfg = load_config()
 
@@ -149,12 +170,13 @@ def agent_start(
         constraints = _ask("must not", constraints)
         persona = _ask("persona", persona)
         interval = int(_ask("seconds between cycles", str(interval)) or 0)
-        max_cycles = int(_ask("max cycles (0 = until done)", str(max_cycles)) or 0)
+        max_cycles = int(_ask("max cycles per run (0 = until done)", str(max_cycles)) or 0)
+        network = _ask("shell network (on/off)", "on" if network else "off").lower() != "off"
         name = _ask("run name", name)
 
     spec = GoalSpec(goal=goal, success=success, constraints=constraints,
                     persona=persona, interval=interval,
-                    max_cycles=max_cycles or None, name=name,
+                    max_cycles=max_cycles, name=name, network=network,
                     max_failures=max_failures, max_idle=max_idle, mcp=mcp)
     return _run_spec(spec, cfg, mcp=mcp)
 
@@ -168,11 +190,21 @@ def _run_spec(spec, cfg, mcp: bool):
     typer.echo(f"  must not  : {spec.constraints or '(none)'}")
     typer.echo(f"  persona   : {spec.persona}")
     typer.echo(f"  cadence   : {'flat out' if not spec.interval else str(spec.interval) + 's between cycles'}")
-    typer.echo(f"  cap       : {spec.max_cycles or 'until done or stopped'}")
+    typer.echo(f"  cap       : {f'{spec.max_cycles} cycles per run' if spec.max_cycles else 'until done or stopped'}")
+    typer.echo(f"  shell net : {'public internet via proxy' if spec.network else 'off (sealed)'}")
     typer.echo(f"  breakers  : {spec.max_failures or 'off'} consecutive failures · "
                f"{spec.max_idle or 'off'} idle cycles")
     typer.echo(f"  tools     : {', '.join(spec.tools) if spec.tools else 'all (unrestricted)'}")
-    typer.echo(f"  autonomy  : FULL — unsandboxed shell and filesystem")
+
+    from .sandbox import Sandbox, available as _sb_available
+    ok, why = _sb_available()
+    if not ok:
+        typer.echo(f"  sandbox   : UNAVAILABLE — {why}")
+        typer.echo("              agent mode will not run unconfined; fix this first.")
+    else:
+        _sb = Sandbox(spec.workspace or (AGENT_DIR / "workspaces" / spec.name),
+                      read_root=Path.cwd(), network=spec.network)
+        typer.echo(f"  sandbox   : {_sb.describe()}")
     typer.echo(f"  stop with : lag agent stop {spec.name}   (or touch {stop_path(spec.name)})\n")
 
     unknown = spec.unknown_tools()
@@ -201,7 +233,10 @@ def _run_spec(spec, cfg, mcp: bool):
             typer.echo(f"\n[agent] stopped ({ev['reason']}) at cycle {ev['cycle']}"
                        + (f" — {ev['detail']}" if ev.get("detail") else ""))
 
-    state = AgentLoop(spec, cfg, provider).run(on_event=show)
+    try:
+        state = AgentLoop(spec, cfg, provider).run(on_event=show)
+    finally:
+        _close(provider)
     typer.echo(f"\n[agent] {state.cycle} cycle(s) · {len(state.notes)} note(s) · "
                f"{state.errors} error(s) · state: {state.path}")
 
@@ -228,7 +263,8 @@ def agent_new(
         persona=_ask("persona", "dev_agent"),
         model=_ask("model override (blank = the persona's)", ""),
         interval=int(_ask("seconds between cycles", "0") or 0),
-        max_cycles=int(_ask("max cycles (0 = until done)", "0") or 0) or None,
+        max_cycles=int(_ask("max cycles per run (0 = until done)", "20") or 0),
+        network=_ask("shell network (on/off)", "on").lower() != "off",
         max_failures=int(_ask("stop after N consecutive failures", "5") or 5),
         max_idle=int(_ask("stop after N idle cycles", "5") or 5),
         tools=[t.strip() for t in tools.split(",") if t.strip()],
@@ -498,7 +534,7 @@ def study_review(course: str, limit: int = typer.Option(20, help="Max cards this
 def study_status(course: str = typer.Argument(None, help="Omit to list all courses.")):
     """Show what's in a course and how you're doing."""
     from . import rag
-    from .study import Deck, Progress, collection_for
+    from .study import Deck, Progress
 
     if not course:
         names = [c.removeprefix("course_") for c in rag.list_collections()
