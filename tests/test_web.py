@@ -155,3 +155,58 @@ class TestOneAgentAtATime:
         assert client.get("/api/agent/running").json()["running"] is None
         client.post("/api/agent/start", json={"goal": "g", "name": "a"})
         assert client.get("/api/agent/running").json()["running"] == "a"
+
+
+# ── goal pipeline ─────────────────────────────────────────────────────────────
+
+@pytest.fixture
+def goal_runner(tmp_path, monkeypatch):
+    """A real GoalRunner on a temp file, with an executor that needs no Ollama."""
+    from lag import agent as agent_mod
+    from lag.goals import GoalRunner
+
+    monkeypatch.setattr(agent_mod, "AGENT_DIR", tmp_path / "agents")
+    runner = GoalRunner(lambda g, s, emit: (["dev_agent"], "ok"), tmp_path / "goals.json")
+    monkeypatch.setitem(web._goal_runner_cache, "runner", runner)
+    yield runner
+    runner.pause()
+
+
+def test_goals_can_be_added_listed_and_removed(goal_runner):
+    d = client.post("/api/goals", json={"text": "ship it", "done_when": "merged"}).json()
+    assert [g["text"] for g in d["goals"]] == ["ship it"]
+    gid = d["goals"][0]["id"]
+    assert client.get("/api/goals").json()["goals"][0]["done_when"] == "merged"
+    d = client.delete(f"/api/goals/{gid}").json()
+    assert d["goals"] == []
+
+
+def test_picking_an_agent_that_does_not_exist_is_refused(goal_runner):
+    d = client.post("/api/goals", json={"text": "x", "agents": ["ghost_agent"]}).json()
+    assert "ghost_agent" in d["error"] and d["goals"] == []
+
+
+def test_a_refused_goal_edit_is_a_message_not_a_500(goal_runner):
+    r = client.post("/api/goals", json={"text": "  "})
+    assert r.status_code == 200 and r.json()["error"]
+    r = client.delete("/api/goals/nope")
+    assert r.status_code == 200 and r.json()["error"] == "no such goal"
+
+
+def test_goal_settings_round_trip(goal_runner):
+    d = client.post("/api/goals/settings", json={"fail": "ask", "plan": False}).json()
+    assert d["settings"]["fail"] == "ask" and d["settings"]["plan"] is False
+    assert "error" in client.post("/api/goals/settings", json={"fail": "nope"}).json()
+
+
+def test_run_works_the_queue(goal_runner):
+    import time
+
+    client.post("/api/goals", json={"text": "a"})
+    client.post("/api/goals/run")
+    for _ in range(200):
+        if goal_runner.goals[0].status == "done":
+            break
+        time.sleep(0.01)
+    assert goal_runner.goals[0].status == "done"
+    assert goal_runner.goals[0].answer == "ok"

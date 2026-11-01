@@ -72,6 +72,9 @@ body{
 .crt::after{ content:""; position:absolute; inset:0;
   background:radial-gradient(120% 100% at 50% 45%, rgba(0,0,0,0) 45%, rgba(0,0,0,.72) 100%); }
 
+/* the hidden attribute always wins over a class's display rule */
+[hidden]{ display:none !important; }
+
 /* vfx off — kills both ambient layers outright */
 body.novfx #grid{ display:none; }
 body.novfx .crt{ display:none; }
@@ -98,30 +101,6 @@ body.novfx .crt{ display:none; }
   text-shadow:var(--glow-m); text-transform:uppercase; }
 .wordmark small{ display:block; font-size:9px; letter-spacing:.30em; color:var(--ink-3);
   text-shadow:none; font-weight:400; margin-top:2px; }
-
-#newproj{
-  font-family:var(--mono); font-size:10px; letter-spacing:.22em; text-transform:uppercase;
-  font-weight:700; padding:9px 18px; cursor:pointer;
-  background:transparent; color:var(--p); border:1px solid var(--p);
-  box-shadow:inset 0 0 20px rgba(34,232,106,.10);
-  transition:all .18s ease;
-}
-#newproj:hover{ background:var(--p); color:var(--void); box-shadow:var(--glow-m); }
-#newproj:focus-visible{ outline:2px solid var(--p-core); outline-offset:2px; }
-
-.projchip{
-  display:none; align-items:center; gap:var(--s2);
-  border:1px solid var(--rule); border-left:2px solid var(--p);
-  padding:5px var(--s3); background:var(--panel-2); max-width:340px;
-}
-.projchip.on{ display:flex; }
-.projchip .pn{ font-size:11.5px; color:var(--ink); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.projchip .pm{ font-size:8.5px; letter-spacing:.18em; text-transform:uppercase; color:var(--ink-3); }
-.projchip button{
-  background:none; border:none; color:var(--ink-3); cursor:pointer;
-  font-family:var(--mono); font-size:13px; padding:0 2px; line-height:1;
-}
-.projchip button:hover{ color:var(--fault); }
 
 .mast-meta{ display:flex; gap:var(--s5); margin-left:auto; align-items:center; }
 .meta{ display:flex; flex-direction:column; gap:1px; }
@@ -309,10 +288,96 @@ body.novfx .crt{ display:none; }
 .statusbar button:hover{ color:var(--ink-2); border-color:var(--p-ghost); }
 .statusbar button:focus-visible{ outline:2px solid var(--p); outline-offset:2px; }
 
+/* ══ GOAL PIPELINE ═════════════════════════════════════════════════════════
+   The queue the orchestrator works through. It replaced the project wizard, so it
+   sits where that flow used to start: at the top of the command bar. The now-working
+   card stays visible when the list is folded away. */
+.goals{ border:1px solid var(--rule); background:var(--panel); }
+.g-head{ display:flex; flex-wrap:wrap; align-items:center; gap:var(--s3);
+  padding:var(--s2) var(--s3); border-bottom:1px solid var(--rule); }
+.g-fold{ background:none; border:0; padding:4px 0; cursor:pointer; font-family:var(--mono);
+  font-size:8.5px; letter-spacing:.26em; text-transform:uppercase; color:var(--ink-3);
+  display:flex; gap:var(--s2); align-items:center; }
+.g-fold b{ color:var(--p); font-weight:400; }
+.g-fold:focus-visible{ outline:1px solid var(--p); outline-offset:2px; }
+.g-ctl{ display:flex; flex-wrap:wrap; gap:var(--s3); align-items:center; margin-left:auto; }
+.g-k{ font-size:8.5px; letter-spacing:.2em; text-transform:uppercase; color:var(--ink-3);
+  align-self:center; margin-right:2px; }
+.mode.g-go{ color:var(--void); background:var(--p); border-color:var(--p); font-weight:700; }
+.mode.g-go:hover{ background:var(--p-core); border-color:var(--p-core); color:var(--void); }
+.mode.g-warn{ color:var(--fault); border-color:color-mix(in srgb, var(--fault) 40%, transparent); }
+.mode.g-warn:hover{ border-color:var(--fault); color:var(--fault); }
+.mode.g-ico{ padding:5px 8px; line-height:1; }
+
+.g-now{ padding:var(--s3); border-bottom:1px solid var(--rule);
+  background:color-mix(in srgb, var(--p) 6%, var(--panel)); display:flex;
+  flex-direction:column; gap:var(--s2); }
+.g-now.failed{ background:color-mix(in srgb, var(--fault) 7%, var(--panel)); }
+.g-now .row{ display:flex; flex-wrap:wrap; gap:var(--s2); align-items:center; }
+.g-now .lab{ font-size:8.5px; letter-spacing:.26em; text-transform:uppercase; color:var(--p-core); }
+.g-now.failed .lab{ color:var(--fault); }
+.g-now .gt{ font-size:13.5px; color:var(--ink); }
+.g-now .acts{ margin-left:auto; display:flex; gap:var(--s1); }
+.g-dot{ width:7px; height:7px; background:var(--p); box-shadow:var(--glow-s); flex:none;
+  animation:gpulse 1.4s ease-in-out infinite; }
+.g-dot.paused{ background:var(--amber); box-shadow:none; animation:none; }
+@keyframes gpulse{ 0%,100%{ opacity:1 } 50%{ opacity:.35 } }
+@media (prefers-reduced-motion: reduce){ .g-dot{ animation:none; } }
+.g-stg{ font-size:9.5px; letter-spacing:.1em; padding:3px 8px; border:1px solid var(--rule);
+  color:var(--ink-3); white-space:nowrap; }
+.g-stg[data-st="done"]{ color:var(--p-mid); border-color:var(--p-deep); }
+.g-stg[data-st="now"]{ color:var(--void); background:var(--p); border-color:var(--p); box-shadow:var(--glow-s); }
+.g-stg[data-st="plan"]{ color:var(--rag); border-color:var(--rag-deep); }
+.g-pill{ font-size:8.5px; letter-spacing:.2em; text-transform:uppercase; padding:2px 7px;
+  border:1px solid var(--rule); color:var(--ink-2); white-space:nowrap; }
+.g-pill[data-s="running"]{ color:var(--void); background:var(--p); border-color:var(--p); }
+.g-pill[data-s="pausing"]{ color:var(--amber); border-color:var(--amber-deep); }
+.g-pill[data-s="done"]{ color:var(--p-core); border-color:var(--p-deep); }
+.g-pill[data-s="failed"]{ color:var(--fault); border-color:var(--fault); }
+.g-pill[data-s="skipped"]{ color:var(--ink-3); }
+.g-pill[data-s="next"]{ color:var(--wire); border-color:var(--wire-deep); }
+.g-note{ padding:6px var(--s3); font-size:11px; color:var(--amber);
+  border-bottom:1px solid var(--rule); }
+.g-note.err{ color:var(--fault); }
+
+.g-body{ max-height:30vh; overflow:auto; }
+.g-add{ padding:var(--s3); display:flex; flex-direction:column; gap:var(--s2);
+  border-bottom:1px solid var(--rule); background:var(--panel-2); }
+.g-add .line{ display:flex; flex-wrap:wrap; gap:var(--s2); align-items:center; }
+.g-add label{ font-size:8.5px; letter-spacing:.24em; text-transform:uppercase; color:var(--ink-3);
+  min-width:86px; }
+.g-in{ flex:1 1 260px; min-width:0; background:var(--void); border:1px solid var(--rule);
+  color:var(--ink); font-family:var(--mono); font-size:12.5px; padding:7px 9px; outline:none; }
+.g-in:focus{ border-color:var(--p); }
+.g-in::placeholder{ color:var(--ink-3); }
+.g-pick{ display:flex; flex-wrap:wrap; gap:var(--s1); padding:var(--s2);
+  border:1px solid var(--rule); background:var(--panel); }
+.g-pick .hint{ flex-basis:100%; font-size:10.5px; color:var(--ink-3); margin-bottom:2px; }
+.g-sec{ display:flex; align-items:center; gap:var(--s2); padding:6px var(--s3);
+  font-size:8.5px; letter-spacing:.26em; text-transform:uppercase; color:var(--ink-3);
+  border-bottom:1px solid var(--rule); }
+.g-sec .grow{ margin-left:auto; display:flex; gap:var(--s1); }
+.g-list{ list-style:none; margin:0; padding:0; }
+.g-list li{ display:flex; flex-wrap:wrap; gap:var(--s3); align-items:flex-start;
+  padding:var(--s2) var(--s3); border-bottom:1px solid var(--rule); }
+.g-list .num{ width:22px; height:22px; border:1px solid var(--rule); display:grid;
+  place-items:center; font-size:10px; color:var(--ink-3); flex:none; }
+.g-list .main{ flex:999 1 300px; min-width:0; display:flex; flex-direction:column; gap:2px; }
+.g-list .gt{ color:var(--ink); font-size:12.5px; overflow-wrap:anywhere; }
+.g-list .sub{ font-size:10.5px; color:var(--ink-3); overflow-wrap:anywhere; }
+.g-list .sub b{ font-weight:400; color:var(--p); }
+.g-list .sub b.mine{ color:var(--amber); }
+.g-list .sub.ran{ color:var(--wire); }
+.g-list .sub.err{ color:var(--fault); }
+.g-list .acts{ display:flex; gap:var(--s1); flex:none; }
+.g-list.fin li{ opacity:.82; }
+.g-empty{ padding:var(--s3); font-size:11px; color:var(--ink-3); justify-content:center; }
+.g-list .main .row{ display:flex; flex-wrap:wrap; gap:var(--s2); align-items:center; }
+.g-now .sub{ font-size:10.5px; color:var(--ink-3); overflow-wrap:anywhere; }
+.g-now .sub.err{ color:var(--fault); }
+.msg .g-dw{ font-size:11px; color:var(--ink-3); margin-top:4px; }
+
 /* ══ WIZARD ════════════════════════════════════════════════════════════════ */
-#wiz{ position:fixed; inset:0; z-index:110; background:rgba(4,7,10,.92);
-  display:none; align-items:center; justify-content:center; padding:var(--s5); }
-#wiz.on{ display:flex; }
 #agentwiz{ position:fixed; inset:0; z-index:120; background:rgba(4,7,10,.94);
   display:none; align-items:center; justify-content:center; padding:var(--s5); }
 #agentwiz.on{ display:flex; }
@@ -400,79 +465,7 @@ h4.md-h, h5.md-h, h6.md-h{ font-size:12px; color:var(--ink-2); }
   cursor:pointer; font-family:var(--mono); font-size:14px; width:28px; height:28px; }
 .wiz-x:hover{ color:var(--fault); border-color:var(--fault); }
 
-.wiz-main{ display:grid; grid-template-columns:210px minmax(0,1fr); min-height:0; }
-.wiz-steps{ border-right:1px solid var(--rule); padding:var(--s4) 0; background:var(--panel-2); }
-.wstep{ display:flex; gap:var(--s3); align-items:center; padding:var(--s3) var(--s4);
-  font-size:10px; letter-spacing:.14em; text-transform:uppercase; color:var(--ink-3);
-  border-left:2px solid transparent; }
-.wstep .num{ width:20px; height:20px; border:1px solid var(--rule); display:grid; place-items:center;
-  font-size:9px; flex:0 0 auto; }
-.wstep[data-on="1"]{ color:var(--p-core); border-left-color:var(--p); background:rgba(34,232,106,.05); }
-.wstep[data-on="1"] .num{ border-color:var(--p); color:var(--p-core); box-shadow:var(--glow-s); }
-.wstep[data-done="1"] .num{ border-color:var(--p-deep); color:var(--p-mid); }
-.wstep[data-skip="1"]{ opacity:.3; }
-
 .wiz-body{ padding:var(--s5); overflow:auto; min-height:0; }
-.wpane{ display:none; } .wpane.on{ display:block; }
-.wtitle{ font-size:13px; color:var(--ink); letter-spacing:.06em; margin-bottom:var(--s2); }
-.wnote{ font-size:11px; color:var(--ink-3); line-height:1.6; margin-bottom:var(--s5); max-width:62ch; }
-
-.field{ margin-bottom:var(--s4); }
-.field label{ display:block; font-size:8.5px; letter-spacing:.24em; text-transform:uppercase;
-  color:var(--ink-3); margin-bottom:var(--s2); }
-.field input[type=text], .field textarea{
-  width:100%; background:var(--void); border:1px solid var(--rule); color:var(--ink);
-  font-family:var(--mono); font-size:13px; padding:var(--s3); outline:none; resize:vertical;
-}
-.field input:focus, .field textarea:focus{ border-color:var(--p); box-shadow:inset 0 0 20px rgba(34,232,106,.06); }
-
-.picks{ display:grid; gap:var(--s3); }
-.picks.two{ grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); }
-.pick{
-  border:1px solid var(--rule); background:var(--panel-2); padding:var(--s4);
-  cursor:pointer; text-align:left; font-family:var(--mono); color:var(--ink);
-  display:flex; flex-direction:column; gap:var(--s2); transition:all .18s ease; position:relative;
-}
-.pick:hover{ border-color:var(--p-ghost); background:var(--panel-3); }
-.pick:focus-visible{ outline:2px solid var(--p); outline-offset:2px; }
-.pick[aria-pressed="true"]{ border-color:var(--p); background:rgba(34,232,106,.07);
-  box-shadow:inset 0 0 30px rgba(34,232,106,.07); }
-.pick[aria-pressed="true"]::after{ content:"●"; position:absolute; top:var(--s3); right:var(--s3);
-  color:var(--p); font-size:9px; text-shadow:var(--glow-s); }
-.pick .pt{ font-size:12.5px; color:var(--ink); letter-spacing:.04em; }
-.pick[aria-pressed="true"] .pt{ color:var(--p-core); text-shadow:var(--glow-s); }
-.pick .pd{ font-size:10.5px; color:var(--ink-3); line-height:1.55; }
-.pick .pmeta{ display:flex; gap:var(--s2); margin-top:var(--s1); flex-wrap:wrap; }
-
-.toggle{ display:flex; align-items:center; gap:var(--s3); padding:var(--s3) 0; }
-.sw{ width:42px; height:20px; border:1px solid var(--rule); background:var(--void);
-  cursor:pointer; position:relative; flex:0 0 auto; padding:0; }
-.sw i{ position:absolute; top:2px; left:2px; width:14px; height:14px; background:var(--p-deep);
-  transition:all .2s ease; display:block; }
-.sw[aria-pressed="true"]{ border-color:var(--p); }
-.sw[aria-pressed="true"] i{ left:24px; background:var(--p); box-shadow:var(--glow-s); }
-.sw:focus-visible{ outline:2px solid var(--p); outline-offset:2px; }
-.toggle .tl{ font-size:11.5px; color:var(--ink); }
-.toggle .td{ font-size:10px; color:var(--ink-3); }
-
-.assign{ border:1px solid var(--rule); }
-.arow{ display:grid; grid-template-columns:auto 168px minmax(0,1fr); gap:var(--s3);
-  align-items:center; padding:var(--s2) var(--s3); border-bottom:1px solid var(--rule); }
-.arow:last-child{ border-bottom:none; }
-.arow input[type=checkbox]{ accent-color:#22E86A; width:14px; height:14px; cursor:pointer; }
-.arow .an{ font-size:11px; color:var(--ink-2); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.arow input[type=text]{ background:var(--void); border:1px solid var(--rule); color:var(--ink);
-  font-family:var(--mono); font-size:11.5px; padding:5px var(--s2); outline:none; width:100%; }
-.arow input[type=text]:focus{ border-color:var(--p); }
-.arow.off{ opacity:.42; }
-
-.summary{ border:1px solid var(--p-ghost); background:rgba(34,232,106,.04); padding:var(--s4); }
-.srow{ display:flex; gap:var(--s3); padding:5px 0; font-size:12px; border-bottom:1px solid var(--rule); }
-.srow:last-child{ border-bottom:none; }
-.srow .sk{ width:130px; flex:0 0 auto; font-size:8.5px; letter-spacing:.2em;
-  text-transform:uppercase; color:var(--ink-3); padding-top:3px; }
-.srow .sv{ color:var(--ink); }
-.srow .sv b{ color:var(--p-core); font-weight:400; }
 
 .wiz-foot{ display:flex; align-items:center; gap:var(--s3); padding:var(--s4) var(--s5);
   border-top:1px solid var(--rule); background:var(--panel-2); }
@@ -497,7 +490,6 @@ h4.md-h, h5.md-h, h6.md-h{ font-size:12px; color:var(--ink-2); }
 @media (max-width:760px){
   .console{ grid-template-columns:minmax(0,1fr); } .rail-l{ display:none; }
   .masthead{ padding:var(--s3); flex-wrap:wrap; } .mast-meta{ display:none; }
-  .wiz-main{ grid-template-columns:minmax(0,1fr); } .wiz-steps{ display:none; }
 }
 @media (prefers-reduced-motion:reduce){
   *,*::before,*::after{ animation:none !important; transition:none !important; }
@@ -525,14 +517,6 @@ h4.md-h, h5.md-h, h6.md-h{ font-size:12px; color:var(--ink-2); }
 
   <header class="masthead">
     <div class="wordmark">lag<small>local agent kit</small></div>
-    <button id="newproj">＋ new project</button>
-    <div class="projchip" id="projchip">
-      <div>
-        <div class="pn" id="chip-name"></div>
-        <div class="pm" id="chip-meta"></div>
-      </div>
-      <button id="chip-x" title="End project" aria-label="End project">✕</button>
-    </div>
     <div class="mast-meta">
       <div class="meta modelpick">
         <select id="m-pick" aria-label="Model for this run"><option value="">loading…</option></select>
@@ -552,11 +536,58 @@ h4.md-h, h5.md-h, h6.md-h{ font-size:12px; color:var(--ink-2); }
     <main class="stage">
 
       <div class="cmdbar">
-        <div class="pipelinerow">
-          <span class="lbl">pipeline · <b id="pipeline-state">off</b></span>
-          <div class="modes" role="group" aria-label="Pipeline">
-            <button class="mode" data-mode="pipeline" aria-pressed="false">pipeline</button>
+        <section class="goals" id="goals" aria-label="Goal pipeline">
+          <div class="g-head">
+            <button class="g-fold" id="g-fold" aria-expanded="true" aria-controls="g-body">
+              <span id="g-chev">▾</span><span>pipeline · <b id="g-sum">loading…</b></span>
+            </button>
+            <div class="g-ctl">
+              <div class="modes" role="group" aria-label="Planning">
+                <button class="mode" data-gplan="1" aria-pressed="true">plan first</button>
+                <button class="mode" data-gplan="0" aria-pressed="false">straight through</button>
+              </div>
+              <div class="modes" role="group" aria-label="When a goal fails">
+                <span class="g-k">on fail</span>
+                <button class="mode" data-gfail="stop" aria-pressed="true">stop</button>
+                <button class="mode" data-gfail="skip" aria-pressed="false">skip</button>
+                <button class="mode" data-gfail="ask" aria-pressed="false">ask</button>
+              </div>
+              <button class="mode g-go" id="g-run">run</button>
+            </div>
           </div>
+          <div id="g-now" aria-live="polite"></div>
+          <div class="g-note" id="g-note" hidden></div>
+          <div class="g-body" id="g-body">
+            <form class="g-add" id="g-add" autocomplete="off">
+              <div class="line">
+                <label for="g-text">add a goal</label>
+                <input class="g-in" id="g-text" maxlength="2000" spellcheck="false"
+                       placeholder="what should get done — the orchestrator plans how">
+              </div>
+              <div class="line">
+                <label for="g-done">done when</label>
+                <input class="g-in" id="g-done" maxlength="2000" spellcheck="false"
+                       placeholder="optional — e.g. the suite passes and a test covers it">
+              </div>
+              <div class="line">
+                <button type="button" class="mode" id="g-agents" aria-expanded="false"
+                        aria-controls="g-pick">agents · auto ▾</button>
+                <button type="button" class="mode" id="g-auto" hidden>back to auto</button>
+                <button type="submit" class="mode g-go" id="g-addbtn" style="margin-left:auto">add to pipeline</button>
+              </div>
+              <div class="g-pick" id="g-pick" hidden></div>
+            </form>
+            <div class="g-sec">up next · <span id="g-qn">0</span></div>
+            <ol class="g-list" id="g-queue" aria-label="Goals waiting"></ol>
+            <div class="g-sec">
+              <button type="button" class="mode" id="g-finbtn" aria-expanded="true"
+                      aria-controls="g-fin">finished · 0 ▾</button>
+              <span class="grow"><button type="button" class="mode" id="g-clear">clear finished</button></span>
+            </div>
+            <ul class="g-list fin" id="g-fin" aria-label="Finished goals"></ul>
+          </div>
+        </section>
+        <div class="pipelinerow">
           <div class="agentpick">
             <button class="mode" id="agents-btn" aria-haspopup="true" aria-expanded="false">agents ▾</button>
             <div class="agentmenu" id="agentmenu" role="menu" hidden></div>
@@ -580,7 +611,7 @@ h4.md-h, h5.md-h, h6.md-h{ font-size:12px; color:var(--ink-2); }
           <div class="empty">
             <b>ready</b>
             loading… · 8192 ctx · retrieval active · 9 tools over mcp<br>
-            ask a question, or start a project from the top bar
+            ask a question, or add a goal to the pipeline above
           </div>
         </div>
       </div>
@@ -743,123 +774,6 @@ h4.md-h, h5.md-h, h6.md-h{ font-size:12px; color:var(--ink-2); }
   </div>
 </div>
 
-<!-- ═══ WIZARD ═══════════════════════════════════════════════════════════ -->
-<div id="wiz" role="dialog" aria-modal="true" aria-labelledby="wiz-title">
-  <div class="wiz-box">
-    <div class="wiz-head">
-      <div>
-        <h2 id="wiz-title">new project</h2>
-        <div class="sub" id="wiz-sub">step 1 of 5 · brief</div>
-      </div>
-      <button class="wiz-x" id="wiz-close" aria-label="Close">✕</button>
-    </div>
-
-    <div class="wiz-main">
-      <nav class="wiz-steps" id="wiz-nav"></nav>
-      <div class="wiz-body">
-
-        <!-- 1 BRIEF -->
-        <section class="wpane on" data-step="0">
-          <div class="wtitle">What are we building?</div>
-          <div class="wnote">Name the project and describe the objective. This becomes the brief every
-            agent works from — the orchestrator decomposes it, or you hand pieces out yourself.</div>
-          <div class="field">
-            <label for="p-name">project name</label>
-            <input type="text" id="p-name" placeholder="url-shortener">
-          </div>
-          <div class="field">
-            <label for="p-obj">objective</label>
-            <textarea id="p-obj" rows="5" placeholder="Design and implement a tiny URL shortener with base62 encoding and SQLite persistence."></textarea>
-          </div>
-        </section>
-
-        <!-- 2 ORCHESTRATION -->
-        <section class="wpane" data-step="1">
-          <div class="wtitle">Who runs the project?</div>
-          <div class="wnote">Either the orchestrator breaks the objective into tasks and delegates them,
-            or you turn it off and assign work to specific agents yourself.</div>
-          <div class="picks two">
-            <button class="pick" data-orch="auto" aria-pressed="true">
-              <span class="pt">Orchestrated</span>
-              <span class="pd">architect_agent decomposes the brief, delegates to specialists, then
-                synthesises their output into one result. Hands-off.</span>
-              <span class="pmeta"><span class="tag model">loading…</span><span class="tag">auto-delegate</span></span>
-            </button>
-            <button class="pick" data-orch="manual" aria-pressed="false">
-              <span class="pt">Manual assignment</span>
-              <span class="pd">Orchestrator off. You choose which agents run and write the instruction
-                each one receives. Full control, no delegation layer.</span>
-              <span class="pmeta"><span class="tag">you assign</span><span class="tag">no synthesis</span></span>
-            </button>
-          </div>
-        </section>
-
-        <!-- 3 MODEL -->
-        <section class="wpane" data-step="2">
-          <div class="wtitle">Which model drives it?</div>
-          <div class="wnote">8–9B is the sweet spot for reasoning and structured output. Smaller models
-            are faster but weaker at delegation; R1 distills make poor orchestrators — thinking tokens
-            wreck loop latency.</div>
-          <div class="picks" id="model-picks"></div>
-        </section>
-
-        <!-- 4 PIPELINE -->
-        <section class="wpane" data-step="3">
-          <div class="wtitle">Run it as a pipeline?</div>
-          <div class="wnote">Stages run in the order you set, each seeing everything produced above it.
-            Order is meaning — design, then build, then review — and it is also the cost: only one
-            model stays resident, so every change of model between stages costs a reload.</div>
-          <div class="toggle">
-            <button class="sw" id="sw-pipeline" aria-pressed="true" aria-label="Use pipeline"><i></i></button>
-            <div>
-              <div class="tl">Use a pipeline</div>
-              <div class="td">Off runs a single agent on the whole brief.</div>
-            </div>
-          </div>
-          <div class="picks" id="pipeline-picks" style="margin-top:var(--s4)">
-            <button class="pick" data-sm="pipeline" aria-pressed="true">
-              <span class="pt">plan first</span>
-              <span class="pd">The lead stage writes one instruction per stage below it before any work
-                starts, and those instructions ride the context down the line. It is never called
-                back, which keeps the run to one model load per distinct model.</span>
-            </button>
-            <button class="pick" data-sm="no-plan" aria-pressed="false">
-              <span class="pt">straight through</span>
-              <span class="pd">Skip the briefing and put every stage straight onto the task, each
-                building on the output above it.</span>
-            </button>
-          </div>
-        </section>
-
-        <!-- 5 ASSIGN -->
-        <section class="wpane" data-step="4">
-          <div class="wtitle">Assign the work</div>
-          <div class="wnote" id="assign-note">Choose which agents run and what each one is told to do.
-            Blank instructions inherit the project objective.</div>
-          <div class="assign" id="assign"></div>
-        </section>
-
-        <!-- 6 REVIEW -->
-        <section class="wpane" data-step="5">
-          <div class="wtitle">Ready to launch</div>
-          <div class="wnote">Check the brief, then launch. You can end the project any time from the
-            chip in the top bar.</div>
-          <div class="summary" id="summary"></div>
-        </section>
-
-      </div>
-    </div>
-
-    <div class="wiz-foot">
-      <span class="hint" id="wiz-hint">retrieval can be toggled from the top bar</span>
-      <div class="grow">
-        <button class="btn" id="wiz-back">back</button>
-        <button class="btn go" id="wiz-next">next</button>
-      </div>
-    </div>
-  </div>
-</div>
-
 <script>
 (() => {
 "use strict";
@@ -891,8 +805,6 @@ const CHUNKS = [
 /* ══ state ══════════════════════════════════════════════════════════════ */
 const S = {
   model: "loading…",
-  pipeline: null,            // null | pipeline | no-plan
-  project: null,          // {name, obj, orch, model, pipeline, modes[], assign[]}
   running: false,
   target: null,           // a single persona picked from the agents dropdown, or null
 };
@@ -1039,6 +951,7 @@ function vbEvent(e){
   else if(e.type === "tool_result") VB.toolResult(e.name, e.content);
   else if(e.type === "trimmed")   VB.note("context trimmed", `${e.dropped_chars} chars dropped to fit ${e.model} (${e.window})`);
   else if(e.type === "no_tools")    VB.note("no tools", e.message);
+  else if(e.type === "nudge")       VB.note("sent back", `${e.name}: ${e.reason}`);
   else if(e.type === "turn_error")  VB.note("turn error", e.message + " — retrying");
   else if(e.type === "cycle_error") VB.note("cycle error", e.message + " — continuing");
   else if(e.type === "error")     VB.note("error", e.message);
@@ -1673,24 +1586,22 @@ function thinkingLine(){
 // Both modes are gone (only one chat model stays resident, so concurrent agents on
 // different tags evict each other), and realTurn() drives the real backend.
 
-/* ══ real turn — talks to the backend ═══════════════════════════════════ */
-async function realTurn(q, mode, opts){
-  opts = opts || {};
-  const agents = opts.agents !== undefined ? opts.agents
-    : ((S.project && S.project.orch==="manual" && S.project.assign.length)
-        ? S.project.assign.map(a=>a.n).join(",") : null);
-  const plan = opts.plan !== undefined ? opts.plan : (mode !== "no-plan");
-
+/* ══ run stream — one run's events, drawn into the chat pane ═════════════
+   Chat turns and goals both render through this, so a goal reads like a chat turn.
+   o.first is the opening status line. o.crumbs drives the stageflow breadcrumb under
+   the prompt; chat only, since a goal's card has its own stage chips. */
+function chatStream(o){
+  o = o || {};
   // One thinking line PER STAGE. It used to be a single line killed on the first
   // token, which left every stage after the first with no progress indicator at all —
   // later set() calls wrote to a node already detached from the DOM.
-  VB.clear();
   let th = thinkingLine();
-  th.set(mode ? "starting pipeline" : "thinking");
+  th.set(o.first || "thinking");
   const newThinkingLine = () => { th.kill(); th = thinkingLine(); return th; };
+  const crumb = (n, s) => { if(o.crumbs) setUnit(n, s); };
 
   let box = null, answer = null, streamed = "", faulted = false;
-  let thinkChars = 0, curStage = null;
+  let thinkChars = 0, curStage = o.stage || null;   // o.stage: joined a run mid-stage
 
   // The answer node is created on the FIRST token, not up front, so the thinking line
   // stays put while the model reasons and the message appears only when it has words.
@@ -1702,11 +1613,10 @@ async function realTurn(q, mode, opts){
     answer.appendChild(el("span","cursor"));
   };
 
-  const onEvent = (e) => {
-    vbEvent(e);
+  const event = (e) => {
     if(e.type === "routing"){
       th.set(`${e.lead} · ${e.model} · choosing the team from ${e.candidates.length} agents…`);
-      resetUnits();
+      if(o.crumbs) resetUnits();
     } else if(e.type === "routed"){
       const picked = e.agents.map(a=>a.name);
       th.set(`routed → ${picked.join(" → ")}`);
@@ -1720,10 +1630,10 @@ async function realTurn(q, mode, opts){
       Tps.start();
       const names = (e.stages||[]).map(x=>x.name);
       th.set(`${names.length} stage(s) · ${e.loads} model load(s) · ${names.join(" → ")}`);
-      renderStageflow(names);   // the breadcrumb lights up as each stage runs
+      if(o.crumbs) renderStageflow(names);   // the breadcrumb lights up as each stage runs
     } else if(e.type === "stage"){
-      if(curStage) setUnit(curStage, "done");
-      curStage = e.name; setUnit(e.name, "active");
+      if(curStage) crumb(curStage, "done");
+      curStage = e.name; crumb(e.name, "active");
       loadModel(e.model);
       thinkChars = 0;
       if(box){                       // previous stage finished: close it out, start fresh
@@ -1743,6 +1653,9 @@ async function realTurn(q, mode, opts){
       streamed += e.text;
       answer.querySelector(".cursor").insertAdjacentText("beforebegin", e.text);
       scroll();
+    } else if(e.type === "nudge"){
+      say("lag · pipeline","msg-ai").textContent =
+        `${e.reason}, and nobody is there to answer — sending ${e.name} back to choose and finish.`;
     } else if(e.type === "no_tools"){
       const b = say("lag","msg-ai"); b.style.color = "var(--amber)"; b.textContent = e.message;
     } else if(e.type === "tool"){
@@ -1755,6 +1668,38 @@ async function realTurn(q, mode, opts){
         .insertAdjacentText("beforebegin", e.answer); }
     }
   };
+
+  const fault = (msg) => {
+    faulted = true; th.kill();
+    const b = say("fault","msg-ai"); b.style.color="var(--fault)"; b.textContent = msg;
+  };
+
+  // Closes the stream out. Returns whether any answer was shown, so the caller can
+  // say something when a run ended without one.
+  const finish = () => {
+    Tps.stop();
+    th.kill();
+    if(answer){ const c = answer.querySelector(".cursor"); if(c) c.remove(); }
+    // Tokens stream in as plain text so progress is visible; the finished answer is
+    // re-rendered with its structure once it is complete.
+    if(box && streamed) box.innerHTML = mdRender(streamed);
+    if(curStage) crumb(curStage, "done");
+    scroll();
+    return { answered: !!box, faulted };
+  };
+
+  return { event, fault, finish };
+}
+
+/* ══ real turn — talks to the backend ═══════════════════════════════════ */
+async function realTurn(q, mode, opts){
+  opts = opts || {};
+  const agents = opts.agents !== undefined ? opts.agents : null;
+  const plan = opts.plan !== undefined ? opts.plan : (mode !== "no-plan");
+
+  VB.clear();
+  const s = chatStream({ first: mode ? "starting pipeline" : "thinking", crumbs: true });
+  const onEvent = (e) => { vbEvent(e); s.event(e); };
 
   try{
     const res = await fetch("/api/stream", {
@@ -1780,19 +1725,10 @@ async function realTurn(q, mode, opts){
       }
     }
   } catch(err){
-    faulted = true;
-    const b = say("fault","msg-ai"); b.style.color="var(--fault)";
-    b.textContent = String(err.message || err);
+    s.fault(String(err.message || err));
   } finally {
-    Tps.stop();
-    th.kill();
-    if(answer){ const c = answer.querySelector(".cursor"); if(c) c.remove(); }
-    // Tokens stream in as plain text so progress is visible; the finished answer is
-    // re-rendered with its structure once it is complete.
-    if(box && streamed) box.innerHTML = mdRender(streamed);
-    if(curStage) setUnit(curStage, "done");
-    if(!box && !faulted){ const b = say("lag","msg-ai"); b.textContent = "(empty answer)"; }
-    scroll();
+    const r = s.finish();
+    if(!r.answered && !r.faulted){ say("lag","msg-ai").textContent = "(empty answer)"; scroll(); }
   }
 }
 
@@ -1807,7 +1743,6 @@ async function loadState(){
     }
     bootWire(st);          // the wire panel reports servers that actually answered
     renderModels(st);
-    renderModelPicks(st);
     const tn = $("#mcp-tools-n"), rn = $("#mcp-rag-n");
     if(tn) tn.textContent = (st.tools || []).length;
     if(rn) rn.textContent = (st.rag_tools || []).length;
@@ -1816,7 +1751,7 @@ async function loadState(){
       const nt = (st.tools||[]).length + (st.rag_tools||[]).length;
       empty.innerHTML =
         `<b>ready</b>${esc(st.chat_model)} · ${st.num_ctx||8192} ctx · retrieval active · `+
-        `${nt} tools over mcp<br>ask a question, or start a project from the top bar`;
+        `${nt} tools over mcp<br>ask a question, or add a goal to the pipeline above`;
     }
   }catch(e){ /* backend not up yet — keep the placeholders */ }
 }
@@ -1833,13 +1768,13 @@ async function execute(){
   $("#input").value = "";
 
   // A picked agent routes to a single-stage run addressed to just that persona;
-  // otherwise it is a normal turn (solo, or the pipeline if one is engaged).
+  // otherwise it is a normal solo turn. Multi-stage work goes through the goal pipeline.
   say(S.target ? `you → ${S.target}` : "you", S.target ? "msg-me" : "msg-user")
     .textContent = q;
 
   try{
     if(S.target) await realTurn(q, "pipeline", {agents: S.target, plan: false});
-    else         await realTurn(q, S.pipeline);
+    else         await realTurn(q, null);
   }catch(err){
     const b = say("fault","msg-ai"); b.style.color="var(--fault)"; b.textContent = String(err);
   }
@@ -1850,206 +1785,280 @@ async function execute(){
   $("#input").focus({preventScroll:true});
 }
 
-/* ══ pipeline row ══════════════════════════════════════════════════════════ */
-$$(".mode[data-mode]").forEach(b => b.addEventListener("click", () => {
-  if(S.running) return;
-  const was = b.getAttribute("aria-pressed") === "true";
-  $$(".mode[data-mode]").forEach(x => x.setAttribute("aria-pressed","false"));
-  if(!was){ b.setAttribute("aria-pressed","true"); S.pipeline = b.dataset.mode; clearTarget(); }
-  else S.pipeline = null;
-  $("#pipeline-state").textContent = S.pipeline || "off";
-  $("#pipeline-state").style.color = S.pipeline ? "var(--p)" : "var(--ink-3)";
-}));
+/* ══ prompt ══════════════════════════════════════════════════════════════ */
 $("#exec").addEventListener("click", execute);
 $("#input").addEventListener("keydown", e => { if(e.key === "Enter") execute(); });
 $("#input").addEventListener("focus", () => $("#promptwrap").classList.add("focus"));
 $("#input").addEventListener("blur",  () => $("#promptwrap").classList.remove("focus"));
 
-/* ══ WIZARD ═════════════════════════════════════════════════════════════ */
-const W = { step:0, orch:"auto", model:"loading…", pipeline:true, modes:new Set(["pipeline"]), assign:new Map() };
-const STEP_NAMES = ["brief","orchestration","model","pipeline","assign","review"];
+/* ══ goal pipeline ══════════════════════════════════════════════════════
+   The server owns the queue and runs it on its own thread, so this is a viewer: it
+   renders whatever snapshot arrives last, from an edit's reply or from the event
+   stream. A goal's live work streams into the chat pane, like a chat turn; live
+   events never rebuild the card, so a button is not rebuilt under the pointer. */
+const GP = { snap:null, picked:[], pickOpen:false, finOpen:true, fold:false, flash:null };
+try { GP.fold = localStorage.getItem("lag.goals.fold") === "1"; } catch(_){}
 
-// model picks — filled from /api/state, like every other model list. This used to
-// iterate a hardcoded MODELS array; when that array was deleted the reference here
-// survived and threw at load, which stopped the whole script before loadState ran.
-const mp = $("#model-picks");
-function renderModelPicks(st){
-  if(!mp) return;
-  mp.innerHTML = "";
-  const models = ((st.ollama && st.ollama.models) || []).filter(m => !m.embedding);
-  if(!models.length){ mp.appendChild(el("div","tnote","no chat models reported by ollama")); return; }
-  if(!models.some(m => m.name === W.model)) W.model = st.chat_model || models[0].name;
-  models.forEach(m => {
-    const b = el("button","pick");
-    b.dataset.model = m.name;
-    b.setAttribute("aria-pressed", String(m.name === W.model));
-    const why = m.tools
-      ? (m.thinking ? "Tools and reasoning — suitable for orchestration."
-                    : "Tool calling, no separate reasoning channel.")
-      : "Cannot call tools: no files, shell, retrieval or memory.";
-    b.innerHTML =
-      `<span class="pt">${esc(m.name)}</span>
-       <span class="pd">${why}</span>
-       <span class="pmeta">
-         <span class="tag ${m.tools ? "model" : "warn"}">${m.tools ? "tools" : "chat only"}</span>
-         ${m.thinking ? '<span class="tag">reasoning</span>' : ""}
-       </span>`;
-    b.addEventListener("click", () => {
-      mp.querySelectorAll(".pick").forEach(x => x.setAttribute("aria-pressed","false"));
-      b.setAttribute("aria-pressed","true"); W.model = m.name;
-    });
-    mp.appendChild(b);
-  });
-}
+const FINISHED_G = ["done","failed","skipped"];
+const gById = id => ((GP.snap && GP.snap.goals) || []).find(g => g.id === id);
 
-// assignment rows
-const asg = $("#assign");
-AGENTS.forEach(a => {
-  const r = el("div","arow off");
-  r.innerHTML =
-    `<input type="checkbox" data-a="${a.n}" aria-label="Enable ${a.n}">
-     <span class="an">${a.n}</span>
-     <input type="text" data-t="${a.n}" placeholder="instruction — blank inherits the objective">`;
-  const cb = r.querySelector("input[type=checkbox]");
-  cb.addEventListener("change", () => {
-    r.classList.toggle("off", !cb.checked);
-    if(cb.checked) W.assign.set(a.n, r.querySelector("input[type=text]").value);
-    else W.assign.delete(a.n);
-  });
-  r.querySelector("input[type=text]").addEventListener("input", e => {
-    if(cb.checked) W.assign.set(a.n, e.target.value);
-  });
-  asg.appendChild(r);
-});
-
-// orchestration + pipeline picks
-$$("[data-orch]").forEach(b => b.addEventListener("click", () => {
-  $$("[data-orch]").forEach(x => x.setAttribute("aria-pressed","false"));
-  b.setAttribute("aria-pressed","true"); W.orch = b.dataset.orch;
-  buildNav();
-}));
-$("#sw-pipeline").addEventListener("click", () => {
-  W.pipeline = !W.pipeline;
-  $("#sw-pipeline").setAttribute("aria-pressed", String(W.pipeline));
-  $("#pipeline-picks").style.opacity = W.pipeline ? "1" : ".35";
-  $("#pipeline-picks").style.pointerEvents = W.pipeline ? "auto" : "none";
-});
-$$("[data-sm]").forEach(b => b.addEventListener("click", () => {
-  // Exclusive, not additive: the lead either briefs the stages or it doesn't. These
-  // used to be swarm modes that could stack, which is why the old handler was a Set.
-  $$("[data-sm]").forEach(o => o.setAttribute("aria-pressed", String(o === b)));
-  W.modes = new Set([b.dataset.sm]);
-}));
-
-const planLabel = m => m === "no-plan" ? "straight through" : "plan first";
-
-function buildNav(){
-  const nav = $("#wiz-nav"); nav.innerHTML = "";
-  STEP_NAMES.forEach((n,i) => {
-    const skip = (i === 4 && W.orch === "auto");
-    const s = el("div","wstep", `<span class="num">${i+1}</span><span>${n}</span>`);
-    s.dataset.on = String(i === W.step);
-    s.dataset.done = String(i < W.step);
-    s.dataset.skip = skip ? "1" : "0";
-    nav.appendChild(s);
-  });
-}
-function summarise(){
-  const modes = [...W.modes];
-  const stages = W.orch === "manual"
-    ? [...W.assign.keys()]
-    : ["architect_agent","dev_agent","senior_dev_agent"];
-  $("#summary").innerHTML =
-    `<div class="srow"><span class="sk">project</span><span class="sv"><b>${esc($("#p-name").value || "untitled")}</b></span></div>
-     <div class="srow"><span class="sk">objective</span><span class="sv">${esc($("#p-obj").value || "(inherits from your first message)")}</span></div>
-     <div class="srow"><span class="sk">orchestration</span><span class="sv">${W.orch === "auto"
-        ? "<b>Orchestrated</b> — architect_agent delegates and synthesises"
-        : "<b>Manual</b> — orchestrator off, you assigned the work"}</span></div>
-     <div class="srow"><span class="sk">model</span><span class="sv"><b>${W.model}</b></span></div>
-     <div class="srow"><span class="sk">pipeline</span><span class="sv">${W.pipeline
-        ? "<b>" + planLabel(modes[0]) + "</b> · stages run in order, each seeing the context above it"
-        : "off — a single agent takes the whole brief"}</span></div>
-     <div class="srow"><span class="sk">agents</span><span class="sv">${stages.length ? stages.join(", ") : "<span style='color:var(--amber)'>none assigned yet</span>"}</span></div>
-     <div class="srow"><span class="sk">tooling</span><span class="sv">mcp${RAG.on ? " · retrieval" : ""}</span></div>`;
-}
-function showStep(i){
-  const total = W.orch === "auto" ? 5 : 6;
-  W.step = i;
-  $$(".wpane").forEach(p => p.classList.toggle("on", +p.dataset.step === i));
-  buildNav();
-  const shown = W.orch === "auto" && i === 5 ? 5 : i+1;
-  $("#wiz-sub").textContent = `step ${Math.min(shown,total)} of ${total} · ${STEP_NAMES[i]}`;
-  $("#wiz-back").disabled = i === 0;
-  $("#wiz-next").textContent = i === 5 ? "launch project" : "next";
-  if(i === 5) summarise();
-  if(i === 4) $("#assign-note").textContent =
-    "Orchestrator is off. Tick the agents that should run and write each instruction. " +
-    "Blank instructions inherit the project objective.";
-}
-const nextStep = () => (W.step === 3 && W.orch === "auto") ? 5 : Math.min(W.step+1, 5);
-const prevStep = () => (W.step === 5 && W.orch === "auto") ? 3 : Math.max(W.step-1, 0);
-
-function openWiz(){
-  $("#wiz").classList.add("on");
-  showStep(0);
-  setTimeout(() => $("#p-name").focus(), 60);
-}
-function closeWiz(){ $("#wiz").classList.remove("on"); }
-
-$("#newproj").addEventListener("click", openWiz);
-$("#wiz-close").addEventListener("click", closeWiz);
-$("#wiz-back").addEventListener("click", () => showStep(prevStep()));
-$("#wiz-next").addEventListener("click", () => {
-  if(W.step === 5) launch();
-  else showStep(nextStep());
-});
-$("#wiz").addEventListener("keydown", e => { if(e.key === "Escape") closeWiz(); });
-
-function launch(){
-  const name = $("#p-name").value.trim() || "untitled";
-  const obj  = $("#p-obj").value.trim();
-  const modes = [...W.modes];
-  S.project = {
-    name, obj, orch:W.orch, model:W.model, pipeline:W.pipeline, modes,
-    assign: [...W.assign.entries()].map(([n,t]) => ({n, t})),
-  };
-  S.model = W.model;
-  // The masthead readout is a <select> now; setting the project's model should move
-  // the picker, not write text into an element that was replaced.
-  const mpk = $("#m-pick");
-  if(mpk && [...mpk.options].some(o => o.value === W.model)){
-    mpk.value = W.model; MODEL.override = W.model;
+async function gApi(path, method, body){
+  try{
+    const r = await fetch(path, { method: method || "POST",
+      headers: body ? {"Content-Type":"application/json"} : {},
+      body: body ? JSON.stringify(body) : undefined });
+    const d = await r.json();
+    if(d && d.goals) gApply(d);
+    if(d && d.error) gFlash(d.error);
+    return d;
+  }catch(e){
+    gFlash("the pipeline did not answer — is lag serve running?");
+    return null;
   }
-
-  // engage the first selected pipeline mode in the command row
-  S.pipeline = W.pipeline ? modes[0] : null;
-  $$(".mode[data-mode]").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.mode === S.pipeline)));
-  $("#pipeline-state").textContent = S.pipeline || "off";
-  $("#pipeline-state").style.color = S.pipeline ? "var(--p)" : "var(--ink-3)";
-
-  $("#projchip").classList.add("on");
-  $("#chip-name").textContent = name;
-  $("#chip-meta").textContent =
-    `${W.orch === "auto" ? "orchestrated" : "manual"} · ${W.model}` +
-    (W.pipeline ? ` · ${planLabel(modes[0])}` : " · solo");
-
-  closeWiz();
-  clearEmpty();
-  const box = say("project launched","msg-ai");
-  box.innerHTML =
-    `<p><strong>${esc(name)}</strong> is live — ${W.orch === "auto"
-      ? "architect_agent will decompose the brief and delegate."
-      : "orchestrator off; " + S.project.assign.length + " agents hold their own instructions."}
-     ${W.pipeline ? "Running as a pipeline — <strong>" + planLabel(modes[0]) + "</strong>." : "Running as a single agent."}
-     Retrieval and MCP are active as always.</p>
-     <p>Send a message to start, or restate the objective to kick it off.</p>`;
-  if(obj) $("#input").value = obj;
-  $("#input").focus({preventScroll:true});
 }
-$("#chip-x").addEventListener("click", () => {
-  S.project = null;
-  $("#projchip").classList.remove("on");
+let gFlashT = null;
+function gFlash(msg){
+  GP.flash = msg; clearTimeout(gFlashT);
+  gFlashT = setTimeout(() => { GP.flash = null; gRenderNote(); }, 6000);
+  gRenderNote();
+}
+function gApply(d){
+  GP.snap = d;
+  if(d.current !== GS.id){
+    if(GS.id) gStreamClose();
+    const cur = d.current ? gById(d.current) : null;
+    if(cur) gStreamOpen(cur);
+  }
+  gRender();
+}
+
+function gRender(){
+  const d = GP.snap; if(!d) return;
+  const goals = d.goals || [];
+  const pend = goals.filter(g => g.status === "pending");
+  const fin  = goals.filter(g => FINISHED_G.includes(g.status))
+                    .sort((a,b) => (b.finished||"").localeCompare(a.finished||""));
+  const cur  = d.current ? gById(d.current) : null;
+  const state = d.pausing ? "pausing" : d.running ? (cur ? "running" : "idle") : "paused";
+  $("#g-sum").textContent =
+    `${pend.length + (cur ? 1 : 0)} left · ${fin.filter(g => g.status === "done").length} done · ${state}`;
+
+  $$("[data-gplan]").forEach(b => b.setAttribute("aria-pressed",
+    String((b.dataset.gplan === "1") === !!d.settings.plan)));
+  $$("[data-gfail]").forEach(b => b.setAttribute("aria-pressed",
+    String(b.dataset.gfail === d.settings.fail)));
+  const run = $("#g-run");
+  run.textContent = d.pausing ? "pausing…" : d.running ? "pause" : "run";
+  run.disabled = !!d.pausing;
+
+  gRenderNow(cur, d);
+  gRenderNote();
+
+  $("#g-qn").textContent = pend.length;
+  $("#g-queue").innerHTML = pend.length ? pend.map((g,i) => `
+    <li><span class="num">${i+1}</span>
+      <div class="main">
+        <div class="row">${i === 0 ? '<span class="g-pill" data-s="next">next</span>' : ""}
+          <span class="gt">${esc(g.text)}</span></div>
+        ${g.done_when ? `<span class="sub">done when · ${esc(g.done_when)}</span>` : ""}
+        <span class="sub">agents · ${g.agents.length
+          ? `<b class="mine">you picked</b> — ${esc(g.agents.join(" → "))}`
+          : "<b>auto</b> — orchestrator picks"}</span>
+      </div>
+      <div class="acts">
+        <button class="mode g-ico" data-gact="up" data-id="${esc(g.id)}" aria-label="Move up"${i === 0 ? " disabled" : ""}>▴</button>
+        <button class="mode g-ico" data-gact="down" data-id="${esc(g.id)}" aria-label="Move down"${i === pend.length-1 ? " disabled" : ""}>▾</button>
+        <button class="mode g-ico" data-gact="remove" data-id="${esc(g.id)}" aria-label="Remove goal">✕</button>
+      </div></li>`).join("")
+    : `<li class="g-empty">nothing queued — add a goal above</li>`;
+
+  const fb = $("#g-finbtn");
+  fb.textContent = `finished · ${fin.length} ${GP.finOpen ? "▴" : "▾"}`;
+  fb.setAttribute("aria-expanded", String(GP.finOpen));
+  $("#g-clear").disabled = !fin.length;
+  const f = $("#g-fin");
+  f.hidden = !GP.finOpen;
+  f.innerHTML = fin.map(g => `
+    <li><span class="g-pill" data-s="${esc(g.status)}">${esc(g.status)}</span>
+      <div class="main"><span class="gt">${esc(g.text)}</span>
+        ${g.route.length ? `<span class="sub ran">ran · ${esc(g.route.join(" → "))}</span>` : ""}
+        ${g.error ? `<span class="sub err">${esc(g.error)}</span>` : ""}</div>
+      <div class="acts">
+        ${g.answer ? `<button class="mode" data-gact="view" data-id="${esc(g.id)}">view</button>` : ""}
+        ${g.status !== "done" ? `<button class="mode" data-gact="retry" data-id="${esc(g.id)}">retry</button>` : ""}
+        <button class="mode g-ico" data-gact="remove" data-id="${esc(g.id)}" aria-label="Remove from finished">✕</button>
+      </div></li>`).join("");
+
+  $("#g-body").hidden = GP.fold;
+  $("#g-chev").textContent = GP.fold ? "▸" : "▾";
+  $("#g-fold").setAttribute("aria-expanded", String(!GP.fold));
+}
+
+function gRenderNow(cur, d){
+  const box = $("#g-now");
+  const aw = d.awaiting ? gById(d.awaiting) : null;
+  if(cur){
+    const route = cur.route || [], si = route.indexOf(d.stage);
+    const chips = (cur.agents.length ? [] :
+        [`<span class="g-stg" data-st="${route.length ? "done" : "plan"}">orchestrator · route</span>`])
+      .concat(route.map((n,i) => `<span class="g-stg" data-st="${
+        si < 0 ? "next" : i < si ? "done" : i === si ? "now" : "next"}">${esc(n)}</span>`));
+    const p = !!d.pausing;
+    box.className = "g-now";
+    box.innerHTML = `
+      <div class="row"><span class="g-dot${p ? " paused" : ""}" aria-hidden="true"></span>
+        <span class="lab">now working</span>
+        <span class="g-pill" data-s="${p ? "pausing" : "running"}">${p ? "pausing after this" : "running"}</span>
+        <span class="acts"><button class="mode" data-gact="skip">skip to next</button>
+          <button class="mode g-warn" data-gact="remove" data-id="${esc(cur.id)}">stop &amp; remove</button></span></div>
+      <div class="gt">${esc(cur.text)}</div>
+      ${cur.done_when ? `<div class="sub">done when · ${esc(cur.done_when)}</div>` : ""}
+      <div class="row">${chips.join("")}</div>`;
+  } else if(aw){
+    box.className = "g-now failed";
+    box.innerHTML = `
+      <div class="row"><span class="lab">goal failed — your call</span>
+        <span class="acts"><button class="mode g-go" data-gact="retry" data-id="${esc(aw.id)}">retry</button>
+          <button class="mode" data-gact="skip">leave it &amp; carry on</button></span></div>
+      <div class="gt">${esc(aw.text)}</div>
+      ${aw.error ? `<div class="sub err">${esc(aw.error)}</div>` : ""}`;
+  } else {
+    box.className = ""; box.innerHTML = "";
+  }
+}
+
+function gRenderNote(){
+  const n = $("#g-note"), d = GP.snap;
+  let msg = GP.flash;
+  if(!msg && d){
+    const pend = (d.goals || []).some(g => g.status === "pending");
+    msg = d.note || (d.current || d.awaiting ? ""
+      : d.running ? "idle — add a goal and it starts on its own"
+      : pend ? "paused — press run to start the queue" : "");
+  }
+  n.hidden = !msg; n.textContent = msg || "";
+  n.classList.toggle("err", !!GP.flash);
+}
+
+function gRenderPick(){
+  const p = $("#g-pick"), btn = $("#g-agents");
+  p.hidden = !GP.pickOpen;
+  btn.setAttribute("aria-expanded", String(GP.pickOpen));
+  btn.textContent = `agents · ${GP.picked.length ? GP.picked.length + " picked" : "auto"} ▾`;
+  $("#g-auto").hidden = !GP.picked.length;
+  p.innerHTML = `<span class="hint">Pick the agents for this goal, in run order. None picked means the orchestrator chooses.</span>` +
+    AGENTS.map(a => {
+      const k = GP.picked.indexOf(a.n);
+      return `<button type="button" class="mode" data-gpick="${esc(a.n)}" aria-pressed="${k >= 0}">${
+        k >= 0 ? (k+1) + " · " : ""}${esc(a.n)}</button>`;
+    }).join("");
+}
+
+/* A goal's live work goes into the chat pane through the same stream renderer as a
+   chat turn: a header naming the goal, a thinking line per stage, each stage's answer,
+   then one line saying how it ended. The activity window gets the raw events too
+   while chat is idle. */
+const GS = { id:null, s:null };
+function gStreamOpen(g){
+  clearEmpty();
+  const who = g.agents.length ? `goal → ${g.agents.join(" → ")}` : "goal";
+  const t = say(esc(who), "msg-user");
+  t.textContent = g.text;
+  if(g.done_when){ const w = el("div","g-dw"); w.textContent = "done when · " + g.done_when; t.appendChild(w); }
+  GS.id = g.id;
+  const stage = GP.snap && GP.snap.stage;   // set when the page opens on a goal mid-run
+  GS.s = chatStream({ stage, first: stage ? `${stage} · working…`
+    : g.agents.length ? "starting the sandbox…"
+    : "orchestrator is reading the goal and picking the agents…" });
+  if(!S.running) Tps.start();
+}
+function gStreamClose(){
+  const id = GS.id, r = GS.s.finish();
+  GS.id = null; GS.s = null;
+  if(!S.running) pushTps(0);
+  const g = gById(id);
+  const end = !g ? "removed from the queue"
+    : g.status === "done"    ? (r.answered ? "goal done" : "goal done · (empty answer)")
+    : g.status === "failed"  ? "goal failed" + (g.error ? " · " + g.error : "")
+    : g.status === "skipped" ? "goal skipped"
+    : "goal stopped — it is back in the queue";
+  const b = say("lag · pipeline", "msg-ai"); b.textContent = end;
+  if(g && g.status === "failed") b.style.color = "var(--fault)";
+  scroll();
+}
+function gLive(e){
+  if(!GP.snap || e.goal !== GP.snap.current) return;
+  if(GS.id !== e.goal){ const g = gById(e.goal); if(!g) return; gStreamOpen(g); }
+  if(!S.running) vbEvent(e);
+  GS.s.event(e);
+}
+
+function gConnect(){
+  gApi("/api/goals", "GET");
+  if(typeof EventSource === "undefined") return;
+  const es = new EventSource("/api/goals/events");
+  es.onmessage = m => {
+    let e; try { e = JSON.parse(m.data); } catch(_){ return; }
+    if(e.type === "goals") gApply(e); else gLive(e);
+  };
+}
+
+$("#g-fold").addEventListener("click", () => {
+  GP.fold = !GP.fold;
+  try { localStorage.setItem("lag.goals.fold", GP.fold ? "1" : "0"); } catch(_){}
+  gRender();
 });
+$$("[data-gplan]").forEach(b => b.addEventListener("click", () =>
+  gApi("/api/goals/settings", "POST", {plan: b.dataset.gplan === "1"})));
+$$("[data-gfail]").forEach(b => b.addEventListener("click", () =>
+  gApi("/api/goals/settings", "POST", {fail: b.dataset.gfail})));
+$("#g-run").addEventListener("click", async () => {
+  if(GP.snap && GP.snap.running) return gApi("/api/goals/pause");
+  // The masthead model picker applies here as it does to chat: one model for every
+  // stage is also the cheapest run, since nothing reloads between stages.
+  await gApi("/api/goals/settings", "POST", {model: MODEL.override || ""});
+  gApi("/api/goals/run");
+});
+$("#g-add").addEventListener("submit", async e => {
+  e.preventDefault();
+  const text = $("#g-text").value.trim();
+  if(!text){ gFlash("write the goal first"); $("#g-text").focus(); return; }
+  const d = await gApi("/api/goals", "POST",
+    {text, done_when: $("#g-done").value.trim(), agents: GP.picked});
+  if(d && !d.error){
+    $("#g-text").value = ""; $("#g-done").value = "";
+    GP.picked = []; GP.pickOpen = false; gRenderPick();
+    $("#g-text").focus();
+  }
+});
+$("#g-agents").addEventListener("click", () => { GP.pickOpen = !GP.pickOpen; gRenderPick(); });
+$("#g-auto").addEventListener("click", () => { GP.picked = []; gRenderPick(); });
+$("#g-pick").addEventListener("click", e => {
+  const b = e.target.closest("[data-gpick]"); if(!b) return;
+  const n = b.dataset.gpick, k = GP.picked.indexOf(n);
+  if(k >= 0) GP.picked.splice(k, 1); else GP.picked.push(n);
+  gRenderPick();
+});
+$("#g-finbtn").addEventListener("click", () => { GP.finOpen = !GP.finOpen; gRender(); });
+$("#g-clear").addEventListener("click", () => gApi("/api/goals/clear"));
+$("#goals").addEventListener("click", e => {
+  const b = e.target.closest("[data-gact]"); if(!b || b.disabled) return;
+  const id = b.dataset.id, enc = encodeURIComponent(id || "");
+  const act = b.dataset.gact;
+  if(act === "up" || act === "down")
+    gApi(`/api/goals/${enc}/move?delta=${act === "up" ? -1 : 1}`);
+  else if(act === "remove") gApi(`/api/goals/${enc}`, "DELETE");
+  else if(act === "retry")  gApi(`/api/goals/${enc}/retry`);
+  else if(act === "skip")   gApi("/api/goals/skip");
+  else if(act === "view"){
+    const g = gById(id); if(!g) return;
+    clearEmpty();
+    const box = say(`lag · goal · ${(g.route || []).join(" → ") || "pipeline"}`, "msg-ai");
+    box.innerHTML = `<p><strong>${esc(g.text)}</strong></p>` + mdRender(g.answer);
+    scroll();
+  }
+});
+gRenderPick();
 
 /* ══ crt kill switch ════════════════════════════════════════════════════ */
 let vfxOn = true;
@@ -2135,6 +2144,7 @@ if(!RM){
   $("#boot").classList.add("done");
   setTimeout(() => { const b = $("#boot"); if(b) b.remove(); }, 600);
   loadState();
+  gConnect();
   $("#input").focus({preventScroll:true});
 })();
 

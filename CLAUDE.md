@@ -18,13 +18,13 @@ All six original phases (foundation → ReAct loop → MCP server → MCP client
 pipeline → personas → RAG) are done and smoke-tested. Work since then has added agent
 mode, a live web console, container sandboxing for agents, and a study mode.
 
-**Tests: 431 pass with Docker running.** Without it the four real-container tests in
+**Tests: 470 pass with Docker running.** Without it the four real-container tests in
 `test_sandbox.py` skip (start Docker Desktop to run them). `tests/test_console_boot.py` additionally needs
 node + jsdom (`cd tests/js && npm install`) and skips without them.
 
 ```
 src/lag/   config  tools  ollama_client  mcp_client  providers  sandbox  pipeline  agent
-           rag  render  study  web  cli  netguard  egress
+           goals  rag  render  study  web  cli  netguard  egress
 servers/   tools_server.py  rag_server.py
 personas/  nine YAMLs
 agents/    saved agent definitions + per-machine run state (see Agent mode)
@@ -278,6 +278,32 @@ override). `Pipeline.loads()` reports the cold-load cost of an ordering.
 The old `parallel` and `crew` modes were removed (2026-09-07). Don't reintroduce them:
 `parallel` made agents on different tags evict each other in a loop; `crew` forced a second
 cold load for the coordinator's return trip.
+
+## Goal pipeline (`goals.py`)
+
+The console's pipeline panel is a server-owned queue of goals, each one routed pipeline
+run (or a fixed one, if its agents were picked). It replaced the project wizard — don't
+bring a multi-step setup flow back; routing is the orchestrator's job. Rules that hold it
+together:
+
+- **The runner is injected with its executor** (`GoalRunner(execute, path)`). Tests drive it
+  with fakes; `pipeline_executor` is the real one. Keep that seam — it is why the queue's
+  behaviour is testable without Ollama or Docker.
+- **Goals are sandboxed, always** — same container + egress proxy as agent mode, one shared
+  workspace. They run unattended, so they get unattended-grade confinement. A missing
+  runtime raises `SandboxUnavailable`: the goal returns to pending, it is not failed.
+- **Cancel is a `BaseException`** raised from the event hook. Never make it an `Exception`:
+  `OllamaClient.run`'s per-turn `except Exception` would swallow it and keep generating.
+- **The agent lock is taken per goal**, released between goals, never held idle.
+- **A restart never resumes work** — interrupted goals go back to pending, queue paused.
+- **Goals decide, never ask.** `Goal.task()` prepends `UNATTENDED`; an answer that
+  `stopped_short()` gets up to `NUDGES` follow-up turns on the last stage, then fails as
+  "not finished". Don't count an answer that hands back a choice as done.
+- **Console:** a running goal's live work streams into the chat pane through
+  `chatStream()`, the same renderer chat turns use. Live events never re-render the
+  card (that rebuilds its buttons under the pointer); `tests/js/goals_panel.js` fails if
+  either comes back. Keep the global `[hidden]{display:none !important}` rule: class
+  display rules otherwise beat the hidden attribute.
 
 ## Agent mode (`agent.py`)
 

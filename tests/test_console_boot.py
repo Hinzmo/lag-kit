@@ -24,6 +24,7 @@ import pytest
 JS_DIR = Path(__file__).parent / "js"
 HARNESS = JS_DIR / "console_boot.js"
 FORM_HARNESS = JS_DIR / "agent_form.js"
+GOALS_HARNESS = JS_DIR / "goals_panel.js"
 CONSOLE = Path(__file__).parent.parent / "ui" / "console.html"
 
 
@@ -68,8 +69,8 @@ def test_the_harness_catches_a_dead_reference(tmp_path):
     """The check is only worth having if it fails on the bug that shipped."""
     broken = tmp_path / "console.html"
     broken.write_text(CONSOLE.read_text().replace(
-        'const mp = $("#model-picks");',
-        'const mp = $("#model-picks");\nDELETED_ARRAY.forEach(x => x);'))
+        'const stageflow = $("#stageflow");',
+        'const stageflow = $("#stageflow");\nDELETED_ARRAY.forEach(x => x);'))
     r = _run(broken)
     assert r.returncode != 0, "a dead reference must fail the boot check"
     assert "DELETED_ARRAY" in (r.stderr + r.stdout)
@@ -118,3 +119,34 @@ def test_the_form_harness_catches_the_null_cap(tmp_path):
     broken.write_text(src.replace(fixed, 'max_cycles: parseInt(cycles || "0", 10) || null,'))
     r = _run(broken, FORM_HARNESS)
     assert r.returncode != 0 and "sent as null" in (r.stderr + r.stdout)
+
+
+@needs_jsdom
+def test_the_goal_panel_renders_and_sends_the_right_requests():
+    r = _run(CONSOLE, GOALS_HARNESS)
+    assert r.returncode == 0, "goal panel:\n" + (r.stderr or r.stdout)
+
+
+@needs_jsdom
+def test_the_goal_harness_catches_a_token_rebuilding_the_card(tmp_path):
+    """Live events stream into the chat pane and must never re-render the card.
+    Re-rendering it per token rebuilds its buttons, so a click that lands mid-stream
+    hits a detached node."""
+    broken = tmp_path / "console.html"
+    src = CONSOLE.read_text()
+    fixed = "  GS.s.event(e);\n}"
+    assert fixed in src
+    broken.write_text(src.replace(fixed, "  GS.s.event(e);\n  gRender();\n}"))
+    r = _run(broken, GOALS_HARNESS)
+    assert r.returncode != 0 and "rebuilt the card" in (r.stderr + r.stdout)
+
+
+@needs_jsdom
+def test_the_goal_harness_catches_live_work_left_out_of_chat(tmp_path):
+    """A running goal's work belongs in the chat pane, where a chat turn's does."""
+    broken = tmp_path / "console.html"
+    src = CONSOLE.read_text()
+    fixed = "  GS.s.event(e);\n}"
+    broken.write_text(src.replace(fixed, "}"))
+    r = _run(broken, GOALS_HARNESS)
+    assert r.returncode != 0 and "not streamed into chat" in (r.stderr + r.stdout)

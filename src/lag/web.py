@@ -570,3 +570,136 @@ def agents_delete(name: str):
         return {"error": f"{name} is running — stop it first"}
     spec.delete()
     return {"deleted": name}
+
+
+# ── goal pipeline ─────────────────────────────────────────────────────────────
+# The queue lives in this process and runs on its own thread (goals.py), so it keeps
+# going with the browser closed. The console reads it through a snapshot plus an event
+# stream; every edit returns the fresh snapshot so a click never waits on the stream.
+_goal_runner_cache: dict = {}
+
+
+def _goal_runner():
+    from .goals import GoalRunner, pipeline_executor
+
+    if "runner" not in _goal_runner_cache:
+        cfg = load_config()
+        _goal_runner_cache["runner"] = GoalRunner(
+            pipeline_executor(cfg, lambda: _provider(cfg, True)))
+    return _goal_runner_cache["runner"]
+
+
+def _goal_edit(fn):
+    """Apply an edit and answer with the snapshot, or with the reason it was refused.
+    Same contract as the rest of the API: a refusal is a 200 carrying `error`."""
+    runner = _goal_runner()
+    try:
+        fn(runner)
+    except KeyError:
+        return {"error": "no such goal", **runner.snapshot()}
+    except ValueError as e:
+        return {"error": str(e), **runner.snapshot()}
+    return runner.snapshot()
+
+
+class GoalIn(BaseModel):
+    text: str
+    done_when: str = ""
+    agents: list[str] = []      # empty = the orchestrator picks
+
+
+class GoalSettings(BaseModel):
+    plan: bool | None = None
+    fail: str | None = None
+    model: str | None = None
+
+
+@app.get("/api/goals")
+def goals_list():
+    return _goal_runner().snapshot()
+
+
+@app.post("/api/goals")
+def goals_add(g: GoalIn):
+    cfg = load_config()
+    known = {p["name"] for p in _personas(cfg)}
+    unknown = [a for a in g.agents if a not in known]
+    if unknown:
+        return {"error": f"unknown agent(s): {', '.join(unknown)}",
+                **_goal_runner().snapshot()}
+    return _goal_edit(lambda r: r.add(g.text, g.done_when, g.agents))
+
+
+@app.delete("/api/goals/{gid}")
+def goals_remove(gid: str):
+    """Remove a goal. The running one is stopped at its next event and dropped."""
+    return _goal_edit(lambda r: r.remove(gid))
+
+
+@app.post("/api/goals/{gid}/move")
+def goals_move(gid: str, delta: int = 1):
+    return _goal_edit(lambda r: r.move(gid, delta))
+
+
+@app.post("/api/goals/{gid}/retry")
+def goals_retry(gid: str):
+    return _goal_edit(lambda r: r.retry(gid))
+
+
+@app.post("/api/goals/skip")
+def goals_skip():
+    """Abandon the running goal (kept as skipped) and move on."""
+    return _goal_edit(lambda r: r.skip())
+
+
+@app.post("/api/goals/clear")
+def goals_clear():
+    """Drop every finished goal — done, failed and skipped."""
+    return _goal_edit(lambda r: r.clear_finished())
+
+
+@app.post("/api/goals/settings")
+def goals_settings(s: GoalSettings):
+    return _goal_edit(lambda r: r.configure(s.plan, s.fail, s.model))
+
+
+@app.post("/api/goals/run")
+def goals_run():
+    return _goal_edit(lambda r: r.run())
+
+
+@app.post("/api/goals/pause")
+def goals_pause():
+    """Stop after the current goal finishes."""
+    return _goal_edit(lambda r: r.pause())
+
+
+@app.get("/api/goals/events")
+def goals_events():
+    """Snapshots on every change, plus the running goal's live events tagged with its
+    id. A GET, so the console can use EventSource — nothing secret travels in the URL.
+    The keepalive comment is also how a closed tab is noticed: the write fails and the
+    subscription is dropped."""
+    runner = _goal_runner()
+    sub = runner.subscribe()
+
+    def gen():
+        try:
+            while True:
+                try:
+                    ev = sub.get(timeout=15)
+                except queue.Empty:
+                    yield ": keepalive\n\n"
+                    continue
+                try:
+                    payload = json.dumps(ev)
+                except (TypeError, ValueError):
+                    payload = json.dumps({"type": ev.get("type", "event"),
+                                          "unserialisable": True})
+                yield f"data: {payload}\n\n"
+        finally:
+            runner.unsubscribe(sub)
+
+    return StreamingResponse(gen(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache",
+                                      "X-Accel-Buffering": "no"})

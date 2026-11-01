@@ -55,6 +55,9 @@ htmlcov/
 agents/*.state.json
 agents/*.stop
 agents/.run.lock
+# The goal pipeline's queue and its atomic-write temp file
+agents/goals.json
+agents/goals.json.tmp
 agent/
 
 # Agent sandbox workspaces: scratch space, per-machine

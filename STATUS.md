@@ -8,8 +8,8 @@ for current state. Working rules for Claude Code live in `CLAUDE.md`.
 
 ## Where it stands
 
-The six original phases are done, and the kit has grown well past them. **334 tests pass,
-2 skip** (the skips need Docker Desktop running). Primary box is the **MacBook Air M4**;
+The six original phases are done, and the kit has grown well past them. **470 tests pass**
+with Docker running (four real-container tests skip without it). Primary box is the **MacBook Air M4**;
 the CPU-only Ubuntu machine it was built on is secondary.
 
 | Phase | What | State |
@@ -27,14 +27,15 @@ Since Phase 6:
 | Feature | Command | State |
 |---------|---------|-------|
 | Live web console (streaming thinking, tokens, tool calls) | `lag serve` | ✅ wired to the real harness |
+| Goal pipeline — a queue of goals the orchestrator works through | console | ✅ sandboxed, runs with the tab closed |
 | Agent mode — saved agents that loop on a goal | `lag agent …` | ✅ |
 | Container sandbox for agents (mandatory) | — | ✅ needs Docker running |
 | Study mode — ask/quiz over your own course notes | `lag study …` | ✅ |
 | Readable output (`render.py`) | — | ✅ |
 | SSRF guard on `http_fetch` | — | ✅ |
 
-**In flight:** branch `feat/sandboxed-agents`, open as **PR #7** — container sandbox,
-public-only egress proxy for agents, SSRF guard, console layout, and these doc refreshes.
+**In flight:** branch `feat/goal-pipeline` — the goal pipeline, replacing the console's
+project wizard.
 
 Repo: `github.com/Hinzmo/local-agent-kit`, default branch `main`.
 
@@ -99,6 +100,41 @@ Sequential stages, each seeing the context above it. By default the orchestrator
 — picks which personas the task needs; `--agents` / `--no-route` override. The lead plans
 once and its instructions ride down. `parallel` and `crew` were removed (see *One model at
 a time*).
+
+### Goal pipeline (`goals.py`, console)
+
+The console's pipeline panel is a **queue of goals**. You write what should get done (plus
+an optional "done when"); each goal becomes one routed pipeline run, or a fixed one if you
+picked its agents. Goals run **one at a time** — the one-resident-model rule again — and
+the list lifts as each finishes. It replaced the six-step project wizard, which asked you
+to make the orchestrator's routing decisions by hand and then only pre-filled the chat box.
+
+- **Server-owned.** A `GoalRunner` thread in `lag serve` drains the queue, so it keeps going
+  with the browser closed. The console renders snapshots from `/api/goals/events` (SSE).
+  The list persists to `agents/goals.json`; a restart puts an interrupted goal back to
+  pending and comes up **paused** — unattended work never resumes by itself.
+- **Confined like agent mode.** Each goal runs in a fresh container sandbox with the
+  egress proxy, writing to one shared workspace (`agents/workspaces/goals`) so later goals
+  can build on earlier ones. No Docker → the goal goes back to pending and the queue pauses
+  with the reason (it is not marked failed).
+- **Decides instead of asking.** Every goal's task opens with a note that nobody will answer
+  mid-run: pick the option that best serves the goal, say which, and finish with the
+  result. The project is read-only at `/project`, so work lands in `/workspace`. If the
+  final answer still ends on a question or an announced next step (`stopped_short()`), the
+  last stage is sent back up to twice; if it still stops short, the goal fails with
+  "not finished" instead of counting as done. Seen live: qwen3:8b had ended a goal on
+  "Which approach would be most helpful?"; with this it ends on a conclusion.
+- **Shares the agent lock.** A running goal holds `agents/.run.lock`, so agent mode is
+  refused meanwhile; a running agent pauses the queue instead of fighting it. The lock is
+  released between goals, never held idle.
+- **Controls:** pause finishes the current goal then stops; **skip** and **stop & remove**
+  take effect at the running goal's next event (measured: 3.5s mid-answer), by raising
+  `Cancelled` from the event hook. `Cancelled` is a `BaseException` on purpose —
+  `OllamaClient.run` catches `Exception` around every turn and would swallow it.
+- **On fail:** `stop` pauses the queue, `skip` carries on, `ask` pauses with the failed goal
+  in the now-working card and retry / carry-on buttons. A run that gave up on malformed
+  turns (`(stopped: …`) counts as failed.
+- "Done when" is passed to the agents as the bar to aim for. **Nothing verifies it yet.**
 
 ### Agent mode
 
@@ -199,7 +235,7 @@ alias of `ornith:latest`.
 4. `cp config.example.yaml config.yaml`, then map the five roles to tags from `ollama list`.
 5. `ollama pull nomic-embed-text`, then `.venv/bin/python servers/rag_server.py --ingest docs/`
 6. Start **Docker Desktop** if you want agent mode (and the 2 sandbox tests).
-7. `.venv/bin/python -m pytest` — expect 431 passing with Docker running; without it, 4 real-container tests skip.
+7. `.venv/bin/python -m pytest` — expect 470 passing with Docker running; without it, 4 real-container tests skip.
    `cd tests/js && npm install` enables the console boot test.
 
 ```bash
@@ -287,7 +323,10 @@ Every one of these was found by running the code, not reading it.
 
 ## What's left
 
-- **Merge PR #7** (`feat/sandboxed-agents`).
+- **Merge `feat/goal-pipeline`**, then prepare the repo for going public (license, path
+  cleanup, README GIF, history scrub).
+- **Goal "done when" is unchecked.** A verification pass (the lead judging the answer
+  against it) would make `done` mean met, not just finished.
 - **Supervised `run_shell` is unsandboxed** — `shell=True`, no path allow-list, 60s timeout.
   Accepted on a single-user box; only agent mode is confined. Revisit before anything
   multi-user.
