@@ -33,7 +33,7 @@ tests/     pytest suite, plus tests/js for the console boot check
 docs/      RAG_SETUP.md  VECTORS_AND_SEARCH.md
 ```
 
-Remote: `github.com/Hinzmo/local-agent-kit` (private). Default branch `main`; feature work
+Remote: `github.com/Hinzmo/local-agent-kit`. Default branch `main`; feature work
 goes on branches and lands via PR.
 
 > **`STATUS.md` is the living status doc** — update it when behaviour changes; this file
@@ -419,7 +419,7 @@ box.
 Built originally on a CPU-only Ubuntu machine running Claude Code under **snap
 confinement**. These traps do **not** exist on the Mac.
 
-- **`PIP_PREFIX=/home/hinzmo/snap/claude-code/common` is exported globally** by snap and
+- **`PIP_PREFIX=~/snap/claude-code/common` is exported globally** by snap and
   silently redirects every `pip install` out of any venv; `PYTHONPATH` shadows the venv.
   Clear them:
 

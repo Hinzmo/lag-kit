@@ -36,7 +36,7 @@ Since Phase 6:
 **In flight:** branch `feat/sandboxed-agents`, open as **PR #7** — container sandbox,
 public-only egress proxy for agents, SSRF guard, console layout, and these doc refreshes.
 
-Repo: `github.com/Hinzmo/local-agent-kit` (private), default branch `main`.
+Repo: `github.com/Hinzmo/local-agent-kit`, default branch `main`.
 
 ---
 
@@ -310,7 +310,7 @@ Every one of these was found by running the code, not reading it.
 
 ## Environment traps (Ubuntu box only)
 
-- **`PIP_PREFIX=/home/hinzmo/snap/claude-code/common`** is exported globally by snap and
+- **`PIP_PREFIX=~/snap/claude-code/common`** is exported globally by snap and
   redirects every `pip install` out of any venv; `PYTHONPATH` shadows the venv. Prefix
   commands with `env -u PIP_PREFIX -u PYTHONPATH -u PIP_BREAK_SYSTEM_PACKAGES`.
 - `python3-venv` isn't installed; bootstrap with `--without-pip` + `get-pip.py`.

@@ -118,3 +118,7 @@ Set per machine in `config.yaml` (roles → tags; personas name only a role). Th
 runs a `qwen3:14b` orchestrator comfortably and `num_ctx` up to 32768 cheaply; the
 CPU-only box stays on smaller models and a tighter window. Avoid R1 distills as
 orchestrators — weak at structured output, and the thinking tokens kill loop latency.
+
+## License
+
+MIT. See [LICENSE](LICENSE).

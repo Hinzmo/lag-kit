@@ -3,6 +3,9 @@ name = "local-agent-kit"
 version = "0.2.0"
 description = "Fully offline multi-agent harness over Ollama, with MCP tooling and RAG."
 requires-python = ">=3.10"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Justin Hinzman" }]
 dependencies = [
     "ollama>=0.4",      # local LLM client; auto-generates tool schemas from functions
     "mcp>=1.0",         # official MCP SDK (ships FastMCP as high-level interface)
