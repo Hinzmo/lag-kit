@@ -1,5 +1,5 @@
 # Copy to config.yaml and edit for THIS machine. config.yaml is gitignored.
-ollama_base_url: "http://localhost:11434"
+ollama_base_url: "http://127.0.0.1:11434"
 
 # These five roles are the ONLY place model names live. Personas name a role
 # ("model: coder"), so swapping a model is a one-line change here and every agent
@@ -24,10 +24,10 @@ ollama_base_url: "http://localhost:11434"
 # weights. Use `ollama list` for exact tags; a role pointing at a model you have not
 # pulled fails at run time, and a mistyped role name fails immediately at load.
 models:
-  orchestrator: "qwen3:8b"      # the one stage that plans; give it your strongest model
-  worker: "qwen3:8b"            # sharing one tag downstream avoids a reload per stage
-  coder: "qwen3:8b"
-  fast: "qwen3:8b"
+  orchestrator: "qwen3.5:9b"      # the one stage that plans; give it your strongest model
+  worker: "qwen3.5:9b"            # sharing one tag downstream avoids a reload per stage
+  coder: "qwen3.5:9b"
+  fast: "qwen3.5:9b"
   embed: "nomic-embed-text"     # Phase 6 RAG embeddings
 
 pipeline:

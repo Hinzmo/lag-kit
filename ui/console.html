@@ -502,7 +502,7 @@ h4.md-h, h5.md-h, h6.md-h{ font-size:12px; color:var(--ink-2); }
 <div id="boot">
   <div class="boot-inner">
     <div class="boot-line" data-d="0">lag/v0.2.0  phosphor console</div>
-    <div class="boot-line" data-d="1">ollama @ localhost:11434 ................. <span style="color:var(--p-core)">OK</span>  3 models</div>
+    <div class="boot-line" data-d="1">ollama @ 127.0.0.1:11434 ................. <span style="color:var(--p-core)">OK</span>  3 models</div>
     <div class="boot-line" data-d="2">servers/tools_server.py .................. <span style="color:var(--p-core)">UP</span>  8 tools</div>
     <div class="boot-line" data-d="3">servers/rag_server.py .................... <span style="color:var(--p-core)">UP</span>  retrieval ready</div>
     <div class="boot-line" data-d="4">chroma ./.chroma ......................... <span style="color:var(--p-core)">OK</span>  9 chunks · 768d</div>
@@ -1634,7 +1634,7 @@ function chatStream(o){
     } else if(e.type === "stage"){
       if(curStage) crumb(curStage, "done");
       curStage = e.name; crumb(e.name, "active");
-      loadModel(e.model);
+      loadModel(e.model); S.liveModel = e.model;
       thinkChars = 0;
       if(box){                       // previous stage finished: close it out, start fresh
         const c = answer && answer.querySelector(".cursor"); if(c) c.remove();
@@ -1677,6 +1677,7 @@ function chatStream(o){
   // Closes the stream out. Returns whether any answer was shown, so the caller can
   // say something when a run ended without one.
   const finish = () => {
+    S.liveModel = null;
     Tps.stop();
     th.kill();
     if(answer){ const c = answer.querySelector(".cursor"); if(c) c.remove(); }
@@ -1737,6 +1738,7 @@ async function loadState(){
   try{
     const res = await fetch("/api/state"); if(!res.ok) return;
     const st = await res.json();
+    LAST_STATE = st;
     if(st.chat_model){
       S.model = st.chat_model;
       fillModels(st);
@@ -1755,6 +1757,31 @@ async function loadState(){
     }
   }catch(e){ /* backend not up yet — keep the placeholders */ }
 }
+
+/* ══ live model list ════════════════════════════════════════════════════
+   The server fingerprints Ollama every few seconds and pushes only on a change
+   (a pull, an rm, a model loading or unloading), so a model pulled in another
+   terminal shows up here without a reload. Hidden tabs drop the connection, which
+   stops the server-side checks too; coming back reconnects and gets a fresh list. */
+let LAST_STATE = null, modelWatch = null;
+function applyModels(o){
+  if(!LAST_STATE) return;              // loadState has not landed yet; it brings the list
+  LAST_STATE = Object.assign({}, LAST_STATE, {ollama: o});
+  if(LAST_STATE.chat_model) fillModels(LAST_STATE);
+  renderModels(LAST_STATE);
+  // A stage that is streaming right now keeps its model lit, whatever ps reported.
+  if(S.liveModel) loadModel(S.liveModel);
+}
+function watchModels(){
+  if(modelWatch || document.hidden || typeof EventSource === "undefined") return;
+  modelWatch = new EventSource("/api/models/watch");
+  modelWatch.onmessage = m => {
+    let o; try { o = JSON.parse(m.data); } catch(_){ return; }
+    applyModels(o);
+  };
+}
+function unwatchModels(){ if(modelWatch){ modelWatch.close(); modelWatch = null; } }
+document.addEventListener("visibilitychange", () => document.hidden ? unwatchModels() : watchModels());
 
 /* ══ execute ════════════════════════════════════════════════════════════ */
 async function execute(){
@@ -2143,7 +2170,7 @@ if(!RM){
   }
   $("#boot").classList.add("done");
   setTimeout(() => { const b = $("#boot"); if(b) b.remove(); }, 600);
-  loadState();
+  loadState().then(watchModels);
   gConnect();
   $("#input").focus({preventScroll:true});
 })();

@@ -45,7 +45,8 @@ const dom = new JSDOM(`<!doctype html><html><head></head><body>${html}</body></h
     });
     win.requestAnimationFrame = () => 0;
     win.TextDecoder = TextDecoder;
-    win.EventSource = class { constructor(u) { this.url = u; ES = this; } close() {} };
+    // Only the goal stream; the page also opens /api/models/watch.
+    win.EventSource = class { constructor(u) { this.url = u; if (String(u).includes("/api/goals")) ES = this; } close() {} };
     win.fetch = (u, opts = {}) => {
       const url = String(u), method = opts.method || "GET";
       let body = { personas: [], tools: [], rag_tools: [], agents: [],

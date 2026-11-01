@@ -29,7 +29,7 @@ import ollama
 DB_PATH = "./.chroma"
 COLLECTION = "documents"
 EMBED_MODEL = "nomic-embed-text"
-OLLAMA_HOST = "http://localhost:11434"
+OLLAMA_HOST = "http://127.0.0.1:11434"
 
 
 # ── chunking ────────────────────────────────────────────────────────────────

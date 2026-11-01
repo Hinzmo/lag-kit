@@ -32,9 +32,12 @@ server. Unattended work runs in a locked-down container with a filtering egress 
 The interesting parts of this project are the constraints it was built around, most of
 them measured on the target machine (a 16 GB MacBook Air M4).
 
-**One model at a time is the real limit.** Ollama on this machine keeps exactly one chat
-model resident. Loading a second evicted the first every time, even with 10 GB free, and
-each switch is a 4–6 second cold load. So stages run in sequence, never in parallel (an
+**One model at a time is the real limit.** It is free memory, not a setting: with macOS
+and a browser open, the 16 GB Mac has about 9 GB free, which fits one 5–6 GB chat model.
+Loading a second evicted the first in every trial, and Ollama's log says why: the next
+model is "predicted to exceed available memory" (`system_limited=true`), while GPU
+memory still had room. Each switch is a cold load of 6–7.5s for the 9B orchestrator and
+4–5s for `qwen3:8b`. So stages run in sequence, never in parallel (an
 earlier parallel mode made concurrent agents evict each other in a loop), goals are a
 queue rather than a pool, and routing and briefing happen in a single orchestrator call
 instead of two. Pinning every stage to one model turns a three-load run into one.
@@ -95,28 +98,37 @@ loops until the model answers.
 
 ## Quick start
 
-Needs [Ollama](https://ollama.com) and Python 3.12. Docker Desktop is needed for agent
-mode and the goal queue.
+Needs Python 3.12. Docker Desktop is needed for agent mode and the goal queue.
 
 ```bash
 git clone https://github.com/Hinzmo/local-agent-kit.git && cd local-agent-kit
-python3.12 -m venv .venv
-.venv/bin/python -m pip install -e ".[dev,rag,web,study]"
-
-cp config.example.yaml config.yaml        # map the roles to models from `ollama list`
-ollama pull qwen3:8b && ollama pull nomic-embed-text
-.venv/bin/python servers/rag_server.py --ingest docs/
-
+./install.sh                              # venv, Ollama, models, config.yaml
 .venv/bin/lag serve                       # console at http://127.0.0.1:8765
 ```
 
-Use Python 3.12: macOS ships 3.14 as `python3`, and `chromadb` has no 3.14 wheel yet.
-Run `lag` from the repo root, because its state folders are relative to the working
-directory.
+`install.sh` builds the venv and runs `lag setup`, which installs Ollama if it is missing
+(asking first), starts it, pulls `qwen3.5:9b` for every agent and `nomic-embed-text` for
+retrieval, writes `config.yaml`, and indexes `docs/` into the knowledge base. One model
+for every role means a run loads it once and never switches.
+
+**Switching models is one command.** Local models move fast, so nothing is pinned:
+
+```bash
+lag setup --model qwen3:14b               # pull it and map the agents to it
+lag setup --orchestrator gpt-oss:20b      # same for the planning role
+lag models                                # what's installed, what it supports, who uses it
+```
+
+Re-running `lag setup` with no flags keeps your mapping and pulls anything it names that
+is missing. Use Python 3.12: macOS ships 3.14 as `python3`, and `chromadb` has no 3.14
+wheel yet. Run `lag` from the repo root, because its state folders are relative to the
+working directory.
 
 ## Commands
 
 ```bash
+lag setup                                 # install Ollama, pull models, write config
+lag models                                # installed models and the roles using them
 lag run "what is this project?"           # one agent, local tools
 lag run "same thing" --mcp                # same tools, over the MCP boundary
 lag pipeline "design a url shortener"     # staged agents
@@ -131,15 +143,31 @@ Bring your own. Personas name a role, and `config.yaml` maps each role to any mo
 your `ollama list`. Nothing is hardcoded: the console's model picker reads your installed
 models live from Ollama, and asks each one whether it supports tools and thinking.
 
-| Role | Used by | Example |
-|------|---------|---------|
-| orchestrator | architect, senior dev (plans and routes) | your strongest tool-capable model |
-| worker, coder, fast | the other agents | `qwen3:8b` |
-| embed | retrieval only | `nomic-embed-text` |
+`lag setup` defaults every chat role to **`qwen3.5:9b`**, plus `nomic-embed-text` for
+retrieval. One model for every role means one load per run. It was picked from a
+five-model run on the 16 GB M4, every model on the kit's real 16 tools at 8K context:
 
-Pick models that support tools (`ollama show <tag>`). Pointing the downstream roles at
-one model means no reload between stages. The measurements above used a 9B Qwen 3.5
-build as the orchestrator and `qwen3:8b` for the rest.
+| Model | Engine | Generate | Prefill | Resident | Tool picks | Two real goals |
+|---|---|---:|---:|---:|---:|---|
+| `gemma4:e4b` | MLX | 34.8 tok/s | 324 tok/s | 9.4 GB | 6/7 | both right · 40 s, 57 s |
+| `qwen3.5:9b` | MLX | 18.6 tok/s | 121 tok/s | 7.7 GB | 7/7 | both right · 68 s, 104 s |
+| `ornith:latest` | llama.cpp | 18.1 tok/s | 143 tok/s | 4.7 GB | 6/7 | both right · 61 s, 102 s |
+| `qwen3:8b` | llama.cpp | 15.2 tok/s | 118 tok/s | 5.8 GB | 7/7 | both right · 81 s, 134 s |
+
+The goals were questions about this repo, answered by one agent reading the files and
+graded against the source. On Apple Silicon, Ollama serves `qwen3.5:9b` and `gemma4:e4b`
+as MLX builds automatically. A plain 4-bit MLX build of Qwen was the slowest model in the
+run (14.8 tok/s), so MLX alone is not the speed-up.
+
+Gemma 4 is about twice as fast but holds 9.4 GB whatever the context, which is the whole
+free budget on a 16 GB Mac with a browser open. Use it with memory to spare:
+
+```bash
+lag setup --model gemma4:e4b --orchestrator gemma4:e4b   # everything on Gemma 4
+lag setup --model qwen3:8b --orchestrator qwen3:8b       # smaller, for tighter machines
+```
+
+Pick models that support tools (`lag models` shows which do).
 
 ## Security notes
 
@@ -153,7 +181,7 @@ build as the orchestrator and `qwen3:8b` for the rest.
 
 ## Tests
 
-470 tests: the loop, the MCP bridge, the sandbox and egress proxy (with real containers
+491 tests: the loop, the MCP bridge, the sandbox and egress proxy (with real containers
 when Docker is running), the goal queue, and the console. The console is checked in jsdom.
 
 ```bash

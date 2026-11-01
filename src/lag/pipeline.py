@@ -2,9 +2,9 @@
 
 Replaces the old three-mode `Swarm`, whose name was a lie on this box. `parallel` fired
 every agent at once through a ThreadPoolExecutor, but Ollama here holds exactly ONE chat
-model resident — a hard concurrency cap, measured, not a memory ceiling (probing at
-num_ctx 4096/6144/8192 the second model evicted the first every time while the total sat
-at ~5.9 GB of 16 GB). Concurrent agents on different tags therefore evict each other in a
+model resident. The limit is free system RAM: about 9 GB is free on the 16 GB Mac, one
+5–6 GB model leaves too little for a second, and Ollama's log says so
+(`predicted to exceed available memory … system_limited=true`). Concurrent agents on different tags therefore evict each other in a
 loop. Sequential isn't a compromise here; it's the only shape that runs at full speed.
 
 `crew` went for the same reason. Its coordinator bookended the run — plan, delegate,

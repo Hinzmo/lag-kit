@@ -210,3 +210,76 @@ def test_run_works_the_queue(goal_runner):
         time.sleep(0.01)
     assert goal_runner.goals[0].status == "done"
     assert goal_runner.goals[0].answer == "ok"
+
+
+# ── live model watch ────────────────────────────────────────────────────────
+
+def _collect(signatures, n_checks):
+    """Run _model_events against a scripted sequence of fingerprints."""
+    import asyncio
+
+    from lag import web
+
+    sigs, snaps, frames = list(signatures), [], []
+    checks = {"n": 0}
+
+    def signature():
+        return sigs.pop(0) if sigs else sigs_last[0]
+    sigs_last = [signatures[-1]]
+
+    def snapshot():
+        snaps.append(1)
+        return {"available": [f"m{len(snaps)}"]}
+
+    async def alive():
+        checks["n"] += 1
+        return checks["n"] <= n_checks
+
+    async def nap(_):
+        return None
+
+    async def run():
+        async for f in web._model_events(signature, snapshot, alive, sleep=nap):
+            frames.append(f)
+    asyncio.run(run())
+    return frames, len(snaps)
+
+
+def test_model_watch_pushes_only_on_a_change():
+    frames, built = _collect([("a",), ("a",), ("b",), ("b",), ("b",)], 5)
+    data = [f for f in frames if f.startswith("data:")]
+    assert len(data) == 2 and built == 2   # first sight, then the change; quiet otherwise
+
+
+def test_model_watch_pushes_ollama_going_away():
+    frames, _ = _collect([("a",), None], 2)
+    assert len([f for f in frames if f.startswith("data:")]) == 2
+
+
+def test_model_watch_sends_keep_alives_when_quiet():
+    from lag import web
+    frames, built = _collect([("a",)], web.HEARTBEAT_EVERY + 1)
+    assert built == 1 and frames.count(": keep-alive\n\n") == 1
+
+
+def test_model_watch_stops_when_the_client_leaves():
+    frames, built = _collect([("a",)], 0)
+    assert frames == [] and built == 0
+
+
+def test_model_signature_includes_digests_and_residents(monkeypatch):
+    from types import SimpleNamespace as NS
+
+    from lag import web
+
+    class C:
+        def __init__(self, host=None): pass
+        def list(self): return NS(models=[NS(model="b:1", digest="d2"), NS(model="a:1", digest="d1")])
+        def ps(self): return NS(models=[NS(model="a:1")])
+    monkeypatch.setattr(web.ollama, "Client", C)
+    assert web._models_signature({}) == ((("a:1", "d1"), ("b:1", "d2")), ("a:1",))
+
+    class Down(C):
+        def list(self): raise ConnectionError
+    monkeypatch.setattr(web.ollama, "Client", Down)
+    assert web._models_signature({}) is None

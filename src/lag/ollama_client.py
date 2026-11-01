@@ -44,7 +44,7 @@ def supports(host: str, model: str, capability: str) -> bool:
 
 
 class OllamaClient:
-    def __init__(self, model: str, host: str = "http://localhost:11434",
+    def __init__(self, model: str, host: str = "http://127.0.0.1:11434",
                  system: str | None = None, num_ctx: int | None = None,
                  keep_alive: str | None = None, think: bool | None = None,
                  num_predict: int | None = None):
@@ -97,7 +97,7 @@ class OllamaClient:
         per_model = o.get("num_ctx_by_model") or {}
         return cls(
             model=model,
-            host=cfg.get("ollama_base_url", "http://localhost:11434"),
+            host=cfg.get("ollama_base_url", "http://127.0.0.1:11434"),
             system=system,
             num_ctx=per_model.get(model, o.get("num_ctx")),
             keep_alive=o.get("keep_alive"),

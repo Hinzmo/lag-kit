@@ -16,7 +16,7 @@ def load_config(path: str | None = None) -> dict:
         if candidate and Path(candidate).exists():
             with open(candidate, encoding="utf-8") as f:
                 return yaml.safe_load(f)
-    raise FileNotFoundError("No config found. Run: cp config.example.yaml config.yaml")
+    raise FileNotFoundError("No config found. Run lag setup from the repo root.")
 
 
 def resolve_model(spec: str, cfg: dict) -> str:

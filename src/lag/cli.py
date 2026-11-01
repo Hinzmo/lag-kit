@@ -1,5 +1,6 @@
 """`lag` command-line interface."""
 from __future__ import annotations
+import subprocess
 import typer
 from pathlib import Path
 from .agent import AGENT_DIR
@@ -102,6 +103,135 @@ def serve(
 
     typer.echo(f"lag console → http://{host}:{port}   (Ctrl-C to stop)")
     uvicorn.run(web_app, host=host, port=port, log_level="info")
+
+
+@app.command()
+def setup(
+    orchestrator: str = typer.Option(None, help="Tag for the planning role. Default: config.yaml, else qwen3.5:9b."),
+    model: str = typer.Option(None, help="Tag for worker, coder and fast. Default: config.yaml, else qwen3.5:9b."),
+    embed: str = typer.Option(None, help="Embedding tag. Default: config.yaml, else nomic-embed-text."),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Install Ollama without asking."),
+    ingest: bool = typer.Option(True, help="Index docs/ into the knowledge base if it is empty."),
+    config: str = typer.Option("config.yaml", help="Config file to write."),
+):
+    """Install Ollama, pull the models, and write config.yaml. Re-run to switch models.
+
+    With no flags it pulls whatever config.yaml maps (or the defaults on a first run).
+    Name a tag to pull it and map it: `lag setup --model qwen3:14b`.
+    """
+    import ollama
+    import yaml
+
+    from . import setup as s
+
+    cfg_path = Path(config)
+    example = Path("config.example.yaml")
+    if not cfg_path.exists() and not example.exists():
+        typer.echo("Run lag setup from the repo root (config.example.yaml not found).", err=True)
+        raise typer.Exit(1)
+
+    # 1. Ollama itself.
+    binary = s.find_ollama()
+    if not binary:
+        cmd = s.install_command()
+        if not cmd:
+            typer.echo(f"Ollama is not installed. Get it from {s.DOWNLOAD_URL}, then re-run lag setup.")
+            raise typer.Exit(1)
+        if not yes and not typer.confirm(f"Ollama is not installed. Install it with `{' '.join(cmd)}`?"):
+            typer.echo(f"Skipped. Install it from {s.DOWNLOAD_URL}, then re-run lag setup.")
+            raise typer.Exit(1)
+        if subprocess.run(cmd).returncode != 0 or not (binary := s.find_ollama()):
+            typer.echo(f"The install did not finish. Install it from {s.DOWNLOAD_URL}.", err=True)
+            raise typer.Exit(1)
+    typer.echo(f"✓ ollama  {binary}")
+
+    text = (cfg_path if cfg_path.exists() else example).read_text(encoding="utf-8")
+    current = (yaml.safe_load(text) or {}) if cfg_path.exists() else {}
+    host = current.get("ollama_base_url") or "http://127.0.0.1:11434"
+    client = ollama.Client(host=host)
+    if not s.server_up(client):
+        typer.echo("  starting the Ollama server …")
+        if not s.start_server(binary, client):
+            typer.echo(f"Ollama is installed but not answering at {host}. Start it and re-run.", err=True)
+            raise typer.Exit(1)
+    typer.echo(f"✓ server  {host}")
+    if s.rival_servers(host):
+        typer.echo(s.RIVAL_HINT)
+
+    # 2. Models.
+    roles = s.plan_roles(current.get("models") or {}, orchestrator, model, embed)
+    have = s.installed(client)
+    for tag in dict.fromkeys(roles.values()):
+        if s.norm(tag) in have:
+            typer.echo(f"✓ model   {tag}")
+            continue
+        typer.echo(f"  pulling {tag} …")
+        try:
+            s.pull(client, tag, typer.echo)
+        except Exception as e:  # noqa: BLE001 - a bad tag should say so, not traceback
+            typer.echo(f"Could not pull {tag}: {e}", err=True)
+            raise typer.Exit(1) from None
+        typer.echo(f"✓ model   {tag}")
+
+    from .ollama_client import capabilities
+    for tag in dict.fromkeys(roles[r] for r in ("orchestrator", *s.CHAT_ROLES)):
+        caps = capabilities(host, tag)
+        if caps and "tools" not in caps:
+            typer.echo(f"  ! {tag} does not support tools; agents on it run without them")
+
+    # 3. Config.
+    new = s.write_models(text, roles)
+    if not cfg_path.exists() or new != text:
+        cfg_path.write_text(new, encoding="utf-8")
+        typer.echo(f"✓ config  {cfg_path} written")
+    else:
+        typer.echo(f"✓ config  {cfg_path} unchanged")
+    for r in s.ROLES:
+        typer.echo(f"    {r:<13}{roles[r]}")
+
+    # 4. Knowledge base.
+    if ingest and not Path(".chroma").exists() and Path("docs").is_dir():
+        try:
+            from .rag import ingest as rag_ingest
+        except ImportError:
+            typer.echo("  (skipped the knowledge base: install the [rag] extra)")
+        else:
+            typer.echo("  indexing docs/ into the knowledge base …")
+            rag_ingest("docs", model=roles["embed"], host=host)
+
+    typer.echo("\nReady. Start the console with: lag serve")
+
+
+@app.command()
+def models():
+    """List installed models, what each supports, and which roles use it."""
+    import ollama
+
+    from .ollama_client import capabilities
+    from .setup import norm
+
+    cfg = load_config()
+    host = cfg.get("ollama_base_url") or "http://127.0.0.1:11434"
+    try:
+        tags = sorted(m.model for m in ollama.Client(host=host).list().models)
+    except Exception:  # noqa: BLE001
+        typer.echo(f"Ollama is not answering at {host}. Run: lag setup", err=True)
+        raise typer.Exit(1) from None
+    used: dict[str, list[str]] = {}
+    w = max([len(t) for t in tags] + [len(str(t)) for t in (cfg.get("models") or {}).values()] + [10]) + 2
+    for role, tag in (cfg.get("models") or {}).items():
+        used.setdefault(norm(str(tag)), []).append(role)
+    for tag in tags:
+        caps = capabilities(host, tag)
+        flags = ",".join(c for c in ("tools", "thinking", "embedding") if c in caps) or "completion"
+        roles = ", ".join(used.get(norm(tag), []))
+        typer.echo(f"{tag:<{w}}{flags:<16}{roles}".rstrip())
+    from .setup import RIVAL_HINT, rival_servers
+    if rival_servers(host):
+        typer.echo(RIVAL_HINT)
+    missing = [t for t in used if t not in {norm(x) for x in tags}]
+    for t in missing:
+        typer.echo(f"{t:<{w}}{'NOT INSTALLED':<16}{', '.join(used[t])}   (run: lag setup)")
 
 
 agent_app = typer.Typer(help="Agent mode: one persona pursuing a goal on its own, 24/7 if you like.")

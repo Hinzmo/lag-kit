@@ -96,7 +96,7 @@ def test_the_harness_catches_a_page_that_never_finishes_booting():
     import tempfile
     with tempfile.TemporaryDirectory() as d:
         broken = Path(d) / "console.html"
-        broken.write_text(CONSOLE.read_text().replace("  loadState();", "  return;"))
+        broken.write_text(CONSOLE.read_text().replace("  loadState().then(watchModels);", "  return;"))
         r = _run(broken)
         assert r.returncode != 0
         assert "never requested" in (r.stderr + r.stdout) or "never cleared" in (r.stderr + r.stdout)
@@ -150,3 +150,24 @@ def test_the_goal_harness_catches_live_work_left_out_of_chat(tmp_path):
     broken.write_text(src.replace(fixed, "}"))
     r = _run(broken, GOALS_HARNESS)
     assert r.returncode != 0 and "not streamed into chat" in (r.stderr + r.stdout)
+
+
+MODELS_HARNESS = JS_DIR / "models_watch.js"
+
+
+@needs_jsdom
+def test_the_model_list_stays_live_without_a_reload():
+    r = _run(CONSOLE, MODELS_HARNESS)
+    assert r.returncode == 0, "model watch:\n" + (r.stderr or r.stdout)
+
+
+@needs_jsdom
+def test_the_model_harness_catches_a_watch_left_open_in_a_hidden_tab(tmp_path):
+    """A hidden tab must drop the stream, or the server keeps checking for nobody."""
+    broken = tmp_path / "console.html"
+    src = CONSOLE.read_text()
+    fixed = "document.hidden ? unwatchModels() : watchModels()"
+    assert fixed in src
+    broken.write_text(src.replace(fixed, "watchModels()"))
+    r = _run(broken, MODELS_HARNESS)
+    assert r.returncode != 0 and "hidden tab kept" in (r.stderr + r.stdout)

@@ -18,7 +18,7 @@ All six original phases (foundation → ReAct loop → MCP server → MCP client
 pipeline → personas → RAG) are done and smoke-tested. Work since then has added agent
 mode, a live web console, container sandboxing for agents, and a study mode.
 
-**Tests: 470 pass with Docker running.** Without it the four real-container tests in
+**Tests: 491 pass with Docker running.** Without it the four real-container tests in
 `test_sandbox.py` skip (start Docker Desktop to run them). `tests/test_console_boot.py` additionally needs
 node + jsdom (`cd tests/js && npm install`) and skips without them.
 
@@ -192,11 +192,13 @@ real traceback.
 .venv/bin/python servers/rag_server.py --ingest docs/   # populate .chroma
 .venv/bin/python -m pytest
 
-ollama pull nomic-embed-text                       # required for retrieval
+./install.sh                                       # fresh clone: venv, Ollama, models, config
+.venv/bin/lag setup [--model T] [--orchestrator T] # pull + map; bare re-run never remaps
+.venv/bin/lag models                               # installed tags, capabilities, roles
 ```
 
-`cp config.example.yaml config.yaml` on a new machine, then map the five roles to tags you
-have pulled (`ollama list`).
+`lag setup` (`src/lag/setup.py`) writes `config.yaml` by editing only the role lines inside
+`models:`, so comments survive. Precedence is flag → config.yaml → defaults.
 
 **Run `lag` from the repo root.** `rag.DB_PATH` is `./.chroma` relative to cwd, and agent,
 study and memory state (`agents/`, `study/`, `memory/`) resolve the same way.
@@ -455,5 +457,5 @@ confinement**. These traps do **not** exist on the Mac.
 - `python3-venv` isn't installed and `/usr/bin/python3` has no `pip`; bootstrap with
   `python3 -m venv --without-pip` + `get-pip.py`. Python 3.12, so `[rag]` installs.
 - `ssh`, `~/.ssh` and `ollama` are unreachable from inside the snap. Use `gh` (HTTPS) and
-  Ollama's HTTP API (`http://localhost:11434/api/pull`, `/api/tags`).
+  Ollama's HTTP API (`http://127.0.0.1:11434/api/pull`, `/api/tags`).
 - Smaller models: `ministral-3:8b` (orchestrator), `qwen3.5:4b` (worker), `num_ctx: 8192`.

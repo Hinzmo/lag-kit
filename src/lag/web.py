@@ -23,6 +23,7 @@ two server subprocesses and their threads. Run the server from the repo root so 
 """
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import json
 import queue
@@ -31,7 +32,7 @@ from pathlib import Path
 
 import ollama
 import yaml
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
@@ -84,7 +85,7 @@ def _provider(cfg: dict, mcp: bool):
 
 def _ollama_status(cfg: dict) -> tuple[bool, list[str], list[dict]]:
     """(reachable, available model tags, loaded models with size)."""
-    client = ollama.Client(host=cfg.get("ollama_base_url", "http://localhost:11434"))
+    client = ollama.Client(host=cfg.get("ollama_base_url", "http://127.0.0.1:11434"))
     up, available, loaded = True, [], []
     try:
         available = [m.model for m in client.list().models]
@@ -108,7 +109,7 @@ def _model_capabilities(cfg: dict, tags: list[str]) -> list[dict]:
     They stay listed rather than hidden, because they are still fine for plain
     generation; the UI marks them and the loop drops tools rather than failing.
     """
-    host = cfg.get("ollama_base_url", "http://localhost:11434")
+    host = cfg.get("ollama_base_url", "http://127.0.0.1:11434")
     out = []
     for t in tags:
         caps = sorted(capabilities(host, t))
@@ -120,6 +121,59 @@ def _model_capabilities(cfg: dict, tags: list[str]) -> list[dict]:
             "embedding": "embedding" in caps,
         })
     return out
+
+
+def _models_snapshot(cfg: dict) -> dict:
+    """The `ollama` block of /api/state on its own, for the live watch."""
+    up, available, loaded = _ollama_status(cfg)
+    return {"up": up, "available": available, "loaded": loaded,
+            "models": _model_capabilities(cfg, available)}
+
+
+def _models_signature(cfg: dict):
+    """A cheap fingerprint of what is installed and what is resident.
+
+    Two local HTTP calls, about 1.5 ms together (a subprocess `ollama list` is ~14 ms).
+    Digests are included so re-pulling a tag that changed upstream counts as a change.
+    None means Ollama is not answering, which is itself a state worth pushing.
+    """
+    client = ollama.Client(host=cfg.get("ollama_base_url", "http://127.0.0.1:11434"))
+    try:
+        tags = tuple(sorted((m.model, m.digest) for m in client.list().models))
+    except Exception:  # noqa: BLE001 - unreachable is a state, not an error
+        return None
+    resident: tuple = ()
+    with contextlib.suppress(Exception):
+        resident = tuple(sorted(m.model for m in client.ps().models))
+    return tags, resident
+
+
+WATCH_EVERY = 3.0   # seconds between fingerprints while a console is connected
+HEARTBEAT_EVERY = 10  # quiet checks between keep-alive comments
+
+
+async def _model_events(signature, snapshot, alive, sleep=asyncio.sleep,
+                        every: float = WATCH_EVERY):
+    """Yield an SSE frame each time the fingerprint changes, starting with the first.
+
+    The check runs only while `alive()` says a client is connected, so a closed
+    console costs nothing. A full snapshot (with capability probes, cached per tag)
+    is built only on a change; quiet periods send a comment line every so often so
+    proxies and the browser keep the connection open.
+    """
+    last, quiet = object(), 0
+    while await alive():
+        sig = await asyncio.to_thread(signature)
+        if sig != last:
+            last, quiet = sig, 0
+            snap = await asyncio.to_thread(snapshot)
+            yield f"data: {json.dumps(snap)}\n\n"
+        else:
+            quiet += 1
+            if quiet >= HEARTBEAT_EVERY:
+                quiet = 0
+                yield ": keep-alive\n\n"
+        await sleep(every)
 
 
 def _chroma_count(cfg: dict) -> dict:
@@ -182,6 +236,22 @@ def state():
         "chroma": _chroma_count(cfg),
         "mcp": {"tools_server": True, "rag_server": True},
     }
+
+
+@app.get("/api/models/watch")
+async def models_watch(request: Request):
+    """Push the model list whenever it changes: a pull, an `ollama rm`, a model
+    loading or unloading. The console subscribes while its tab is visible."""
+    cfg = load_config()
+
+    async def alive() -> bool:
+        return not await request.is_disconnected()
+
+    return StreamingResponse(
+        _model_events(lambda: _models_signature(cfg), lambda: _models_snapshot(cfg), alive),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache"},
+    )
 
 
 class RunRequest(BaseModel):

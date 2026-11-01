@@ -7,7 +7,7 @@ what's left. Working rules for Claude Code live in `CLAUDE.md`.
 
 ## Where it stands
 
-The six original phases are done, and the kit has grown well past them. **470 tests pass**
+The six original phases are done, and the kit has grown well past them. **491 tests pass**
 with Docker running (four real-container tests skip without it). Primary box is the **MacBook Air M4**;
 the CPU-only Ubuntu machine it was built on is secondary.
 
@@ -81,6 +81,14 @@ embeds into ChromaDB, so it comes back from a plain question. Documents and reme
 facts share one collection and one ranking; every turn searches it first. Indexing degrades
 safely without `chromadb` or an embedder. `src/lag/rag.py` holds the retrieval core;
 `rag_server.py` is just the protocol wrapper.
+
+### Live model list
+
+`GET /api/models/watch` (SSE) fingerprints Ollama every 3s — `/api/tags` names + digests
+and `/api/ps` residents, ~1.5 ms together, vs ~14 ms for a subprocess `ollama list` — and
+pushes the full model block only when the fingerprint changes. Checks run only while a
+client is connected; the console closes the stream when its tab is hidden. Verified
+live: a terminal `ollama pull` appeared in ~2s, an `ollama rm` vanished in ~2s.
 
 ### Live streaming
 
@@ -192,9 +200,23 @@ and `num_predict: 2048` caps a turn (thinking included) so a spiralling stage fa
 
 ### One model at a time
 
-Ollama here holds exactly **one** chat model resident — a hard cap, not a memory limit (a
-second model evicted the first at ~5.9 GB of 16 GB). Every switch is a cold reload
-(`ornith` 5.7–6.4s, `qwen3:8b` 4.4–4.9s). That drove three decisions: `parallel` mode
+Ollama here holds **one** chat model resident, and the limit is free system RAM. The old
+note here called it "a hard cap, not a memory limit"; that was wrong, and it was measured
+while two Ollama servers ran (see Environment traps). Re-measured 2026-10-31 on the single
+app server (0.40.11), 3 rounds each way at the configured num_ctx:
+
+| | `ornith:latest` @32768 | `qwen3:8b` @8192 |
+|---|---:|---:|
+| cold, nothing loaded (wall) | 7.0–8.2s (load 6.4–7.5) | 5.1–5.3s (load 4.9–5.1) |
+| switching in, evicting the other | 6.1–6.6s (load 5.4–5.9) | 3.8–5.1s (load 3.6–4.9) |
+| resident size | 6.42 GB | 6.19 GB |
+
+Both stayed resident in **0 of 6** trials. Ollama's log gives the reason each time:
+`predicted to exceed available memory … system_limited=true`. About 9.2 GB is free with
+nothing loaded (macOS plus apps hold ~7 GB); after one model, 2.6–4.2 GB is left, while
+GPU memory still shows 5.9–7.7 GB. Even a 2B model needing 3.2 GB was refused with 3.8 GB
+free, so Ollama keeps a margin. More RAM, or fewer apps open, would fit two; on this box
+it is one. A full A→B switch therefore costs one model's cold load, about 4–7s. That drove three decisions: `parallel` mode
 deleted (agents evicting each other), `crew` mode deleted (an extra reload for the
 coordinator's return trip), and every downstream role shares one tag.
 
@@ -223,13 +245,17 @@ list live from Ollama.
 ## Setup and commands (Mac)
 
 1. `git clone git@github.com:Hinzmo/local-agent-kit.git && cd local-agent-kit`
-2. `/opt/homebrew/bin/python3.12 -m venv .venv` — **3.12, not the default `python3`**
-   (macOS 3.14 has no `chromadb` wheel). `brew install python@3.12` if missing.
-3. `.venv/bin/python -m pip install -e ".[dev,rag,web,study]"`
-4. `cp config.example.yaml config.yaml`, then map the five roles to tags from `ollama list`.
-5. `ollama pull nomic-embed-text`, then `.venv/bin/python servers/rag_server.py --ingest docs/`
-6. Start **Docker Desktop** if you want agent mode (and the 2 sandbox tests).
-7. `.venv/bin/python -m pytest` — expect 470 passing with Docker running; without it, 4 real-container tests skip.
+2. `./install.sh` — builds `.venv` on **Python 3.12** (macOS 3.14 has no `chromadb` wheel;
+   it offers `brew install python@3.12` if missing), installs `.[rag,web,study]`, then runs
+   `lag setup`: installs Ollama if missing (asks first; brew on macOS, the official script
+   on Linux), starts the server, pulls `qwen3.5:9b` (every chat role) and `nomic-embed-text`,
+   writes `config.yaml` with comments intact, and indexes `docs/` if `.chroma` is absent.
+   Precedence is flag → config.yaml → defaults, so a bare re-run never remaps anything.
+   Switch models with `lag setup --model <tag>` / `--orchestrator <tag>`; `lag models`
+   lists installed tags, their capabilities and which roles use them.
+3. For development add the test extras: `.venv/bin/python -m pip install -e ".[dev]"`.
+4. Start **Docker Desktop** if you want agent mode (and the 2 sandbox tests).
+5. `.venv/bin/python -m pytest` — expect 491 passing with Docker running; without it, 4 real-container tests skip.
    `cd tests/js && npm install` enables the console boot test.
 
 ```bash
@@ -341,6 +367,17 @@ Every one of these was found by running the code, not reading it.
   has renamed APIs the kit uses before, so re-run the suite after any bump.
 
 ---
+
+## Environment traps (Mac)
+
+- **Two Ollama servers on one port.** The Ollama app listens on every address and a
+  Homebrew `ollama serve` on 127.0.0.1, both on 11434. `localhost` from Python reached
+  the app while the `ollama` CLI reached brew, and each keeps its own model list in
+  memory, so a pull through one was invisible to the other (and each loaded its own
+  copy of `nomic-embed-text`). Fixed on the M4 2026-10-31 with `brew services stop
+  ollama`; the kit now defaults to `127.0.0.1` (the CLI's address), and `lag setup` /
+  `lag models` warn when the two addresses disagree. Residency was re-measured on the single
+  server afterwards: still one chat model, and the cause is free RAM.
 
 ## Environment traps (Ubuntu box only)
 
