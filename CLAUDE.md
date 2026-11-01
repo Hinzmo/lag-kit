@@ -37,8 +37,7 @@ Remote: `github.com/Hinzmo/local-agent-kit`. Default branch `main`; feature work
 goes on branches and lands via PR.
 
 > **`STATUS.md` is the living status doc** — update it when behaviour changes; this file
-> stays focused on working rules. `MORNING_BRIEF.md` and `REBUILD_COMPLETE.md` are June 2026
-> historical documents: reliable on design intent, stale on status.
+> stays focused on working rules.
 
 ### Environment (Mac — the primary box)
 
@@ -80,10 +79,8 @@ Two rules drove this shape:
   downgrade — no files, shell, retrieval or memory. Capability is **discovered, never
   hardcoded**. A failed probe returns an empty set, which callers must read as *capable*:
   treating unknown as incapable would strip a working model of every tool on one flaky
-  status call. `thinking` is resolved the same way. On this box
-  `example/completion-only-8b` and `example/completion-only-mini` are
-  completion-only; `persona-model:latest` supports tools but ships a baked-in persona that
-  fights the persona prompts.
+  status call. `thinking` is resolved the same way. Models with a baked-in system prompt
+  can also fight the persona prompts, so test a tag before mapping a role to it.
 - **A role switch costs a full model reload** (~5s), because only one chat model stays
   resident. So every downstream role points at ONE tag, and `ornith` (9B qwen3.5, tools +
   thinking, 262K trained window) spends its single load on planning.

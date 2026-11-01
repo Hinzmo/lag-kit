@@ -1,8 +1,7 @@
 # local-agent-kit v2 — status
 
-Last updated **2026-10-29**. This is the living status doc: what works, how it works, and
-what's left. `MORNING_BRIEF*.md` and `REBUILD_COMPLETE.md` are historical — trust this file
-for current state. Working rules for Claude Code live in `CLAUDE.md`.
+Last updated **2026-11-01**. This is the living status doc: what works, how it works, and
+what's left. Working rules for Claude Code live in `CLAUDE.md`.
 
 ---
 
@@ -33,9 +32,6 @@ Since Phase 6:
 | Study mode — ask/quiz over your own course notes | `lag study …` | ✅ |
 | Readable output (`render.py`) | — | ✅ |
 | SSRF guard on `http_fetch` | — | ✅ |
-
-**In flight:** branch `feat/goal-pipeline` — the goal pipeline, replacing the console's
-project wizard.
 
 Repo: `github.com/Hinzmo/local-agent-kit`, default branch `main`.
 
@@ -218,11 +214,9 @@ Personas name a **role**; `config.yaml → models:` is the only place tags live.
 
 The default roster (architect → dev → senior_dev) pays three loads; move `senior_dev_agent`
 to `coder` for two. Tool support is **discovered** per tag via Ollama, not hardcoded; a
-completion-only model runs without tools and emits a `no_tools` event. Installed but not
-mapped: `example/completion-only-8b`, `example/completion-only-mini`
-(completion-only), `persona-model:latest` (baked-in persona), `example/llama-3.1-8b-…`
-(rough IQ3_M quant), plus `gemma-4-e2b-aiops`, `qwen3.5:4b` and an `ornith:9b`
-alias of `ornith:latest`.
+completion-only model runs without tools and emits a `no_tools` event. Map roles to
+whatever `ollama list` shows on your machine; the console's model picker reads the same
+list live from Ollama.
 
 ---
 
@@ -323,8 +317,9 @@ Every one of these was found by running the code, not reading it.
 
 ## What's left
 
-- **Merge `feat/goal-pipeline`**, then prepare the repo for going public (license, path
-  cleanup, README GIF, history scrub).
+- **Going public:** license and path cleanup are merged (#9). Left: README refresh with a
+  console GIF, a `lag goals` CLI, a history scrub (junk files, commit email), then flip the
+  repo public.
 - **Goal "done when" is unchecked.** A verification pass (the lead judging the answer
   against it) would make `done` mean met, not just finished.
 - **Supervised `run_shell` is unsandboxed** — `shell=True`, no path allow-list, 60s timeout.

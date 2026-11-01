@@ -1,123 +1,167 @@
 # local-agent-kit (`lag`)
 
-A fully offline multi-agent harness over [Ollama](https://ollama.com). No cloud, no
-API keys — your data never leaves the machine. Agents call tools exposed over the
-Model Context Protocol (MCP), and retrieval is just one more MCP server.
+A fully offline multi-agent harness over [Ollama](https://ollama.com). No cloud, no API
+keys, no telemetry: the models, the tools and your data all stay on the machine.
 
-**Running the web console:** start it from the **repo root** (so the RAG server resolves
-`./.chroma`) with `lag serve`, then open the printed localhost URL. For live-reload during
-development, `uvicorn lag.web:app --reload` from the repo root is the equivalent.
+Agents call tools over a real [Model Context Protocol](https://modelcontextprotocol.io)
+boundary. The tools run as separate server processes, and retrieval is just one more MCP
+server. Unattended work runs in a locked-down container with a filtering egress proxy.
 
-> **v2 rebuild.** The original kit faked the tool layer with a direct-dispatch
-> HTTP/JSON-RPC shim to avoid protocol overhead. v2 replaces that with a real MCP
-> boundary: tools live in separate server processes, get discovered at runtime, and
-> are reusable by any MCP client (this harness, Claude Desktop, Cursor, …).
+![The console running a goal: the orchestrator routes it to agents and their work streams in live](docs/img/console.gif)
 
----
+## What it does
+
+- **Goal queue.** Write what should get done, plus an optional "done when". The
+  orchestrator reads each goal, picks which specialist agents should handle it, briefs
+  them, and works through the queue one goal at a time. It runs on the server, so it keeps
+  going with the browser closed. Agents decide rather than stall: an answer that ends on
+  a question is sent back to choose and finish.
+- **Live console** (`lag serve`). Streams every stage's thinking, tool calls and answer
+  as they happen. A separate activity window keeps the raw trace.
+- **Pipelines** (`lag pipeline`). Staged agents, each seeing the work above it. The
+  orchestrator can choose the stages itself or you can name them.
+- **Agent mode** (`lag agent`). Saved agents that loop on a long-running goal, with
+  circuit breakers for repeated failures and for agents that go idle.
+- **Study mode** (`lag study`). Ask questions and get quizzed on your own course notes,
+  with answers cited from the source.
+- **Nine personas** (architect, dev, senior dev, tester, analyst, researcher and more),
+  each a YAML file that names a role, not a model.
+
+## Design decisions
+
+The interesting parts of this project are the constraints it was built around, most of
+them measured on the target machine (a 16 GB MacBook Air M4).
+
+**One model at a time is the real limit.** Ollama on this machine keeps exactly one chat
+model resident. Loading a second evicted the first every time, even with 10 GB free, and
+each switch is a 4–6 second cold load. So stages run in sequence, never in parallel (an
+earlier parallel mode made concurrent agents evict each other in a loop), goals are a
+queue rather than a pool, and routing and briefing happen in a single orchestrator call
+instead of two. Pinning every stage to one model turns a three-load run into one.
+
+**Thinking costs time; context size doesn't.** Generation speed was flat from 8K to 128K
+context, so `num_ctx` is set for memory, not speed. Reasoning tokens were the cost: personas had a
+thinking switch that never reached Ollama, and one meant to skip reasoning was spending up
+to 2,600 thinking tokens. Wiring the switch through brought that to zero.
+
+**A real MCP boundary, not a shim.** The first version faked tool calls over a direct
+HTTP shim. Now tools live in their own processes, are discovered at runtime, and work
+with any MCP client. The loop accepts anything with `schemas()` and `call()`, so the
+in-process provider, the MCP bridge and the sandbox are wrappers that compose without
+the loop knowing which are present.
+
+**Retrieval is just a tool.** The RAG server exposes one `search_knowledge_base` tool.
+To the agent it looks like any other call.
+
+**Model capabilities are discovered, not hardcoded.** The harness asks Ollama whether a
+model supports tools and thinking. A completion-only model runs without tools and says
+so instead of failing.
+
+**Unattended work is confined, and fails closed.** Agent mode and the goal queue run
+shells in a Docker or Podman container:
+
+- the project is mounted read-only, with one writable workspace
+- all capabilities are dropped, and pids, memory and CPU are capped
+- the only route out is a per-agent proxy on an internal network that allows the public
+  internet but refuses the host, the LAN and the tailnet
+- no container runtime means no run
 
 ## Architecture
 
-Three decoupled layers. The **harness** in the middle is the only piece that knows
-about everything else — nothing else knows about each other. That's the whole point.
-
 ```
         ┌─────────────────────┐
-        │  Ollama (local LLM) │  serves the model, tool-calling enabled
+        │  Ollama (local LLM) │   one chat model resident at a time
         └──────────┬──────────┘
                    │  tools ↓   tool_calls ↑
-        ┌──────────┴──────────┐
-        │  Harness  (lag)     │  ReAct loop + MCP client
-        │  - drives the model │
-        │  - bridges schemas  │
+        ┌──────────┴──────────┐        ┌────────────────────────────┐
+        │  Harness  (lag)     │◄──────►│  Console  (lag serve)       │
+        │  ReAct loop         │  SSE   │  goal queue · live stream   │
+        │  pipeline · goals   │        └────────────────────────────┘
+        │  agent mode         │
         └──────────┬──────────┘
-                   │  stdio · JSON-RPC (MCP)
-        ┌──────────┴───────────────────────────┐
-        │  MCP servers (separate processes)     │
-        │   • tools_server  (fs, shell, search) │
-        │   • rag_server    (search_knowledge…) │──► Vector DB + embedder
-        └───────────────────────────────────────┘        (Chroma · nomic-embed-text)
+                   │  stdio · JSON-RPC (MCP)       ┌──────────────────────────┐
+        ┌──────────┴───────────────────────┐       │ Sandbox (unattended runs)│
+        │  MCP servers (own processes)      │      │ container · ro project   │
+        │   • tools_server  16 tools        │─────►│ egress proxy · fails     │
+        │   • rag_server    knowledge base  │      │ closed without Docker    │
+        └──────────────┬────────────────────┘      └──────────────────────────┘
+                       ▼
+           Chroma · nomic-embed-text
 ```
 
-**The bridge** is the heart of the harness. Each loop iteration:
+Each turn, the harness lists the servers' tools, translates their schemas into Ollama's
+tool-calling format, sends the conversation, routes any `tool_calls` back over MCP, and
+loops until the model answers.
 
-1. Connect to MCP servers, call `tools/list` to discover what they expose.
-2. Translate those MCP tool schemas into Ollama's tool-calling format.
-3. Send the conversation + tools to the model.
-4. If the model emits `tool_calls`, route each one back via `tools/call`.
-5. Append the result as a `role: "tool"` message and loop until the model is done.
+## Quick start
 
-**RAG is not special.** It's one MCP server exposing a single `search_knowledge_base`
-tool. Internally it embeds the query, hits the vector DB, and returns chunks — but to
-the agent it looks identical to any other tool call.
-
----
-
-## Layout
-
-```
-local-agent-kit/
-├── pyproject.toml
-├── config.example.yaml      # copy → config.yaml (gitignored), edit per machine
-├── README.md
-├── src/lag/
-│   ├── cli.py               # `lag` entry point
-│   ├── config.py            # loads config.yaml
-│   ├── ollama_client.py     # OllamaClient + ReAct loop   (Phase 1)
-│   ├── tools.py             # the actual tool functions    (Phase 1)
-│   ├── mcp_client.py        # the bridge: MCP client side  (Phase 3)
-│   └── swarm.py             # pipeline / parallel / crew   (Phase 4)
-├── servers/
-│   ├── tools_server.py      # FastMCP server wrapping tools (Phase 2)
-│   └── rag_server.py        # RAG MCP server                (Phase 6)
-├── personas/                # nine agent YAMLs              (Phase 5)
-└── tests/
-```
-
----
-
-## Build roadmap
-
-All six phases are complete and smoke-tested end to end (105 tests passing).
-
-| Phase | What | Status |
-|------:|------|--------|
-| 0 | Foundation + git | ✅ |
-| 1 | Core ReAct loop over Ollama, local tools | ✅ |
-| 2 | Real MCP server (stdio) | ✅ |
-| 3 | Harness as MCP client — the bridge | ✅ |
-| 4 | Swarm orchestrator (pipeline/parallel/crew) | ✅ |
-| 5 | Nine personas | ✅ |
-| 6 | RAG MCP server + always-on retrieval | ✅ |
-
-See `STATUS.md` for current state and what's left.
-
----
-
-## Setup
-
-Primary dev box is a **MacBook Air M4**; a CPU-only Ubuntu machine is the secondary
-box (its extra environment traps are documented in an appendix in `STATUS.md`).
+Needs [Ollama](https://ollama.com) and Python 3.12. Docker Desktop is needed for agent
+mode and the goal queue.
 
 ```bash
-cp config.example.yaml config.yaml       # edit models for this machine
-
-# Build the venv on Python 3.12 — chromadb (the [rag] extra) has no 3.14 wheels yet,
-# and macOS ships 3.14 as `python3`. Homebrew: `brew install python@3.12`.
+git clone https://github.com/Hinzmo/local-agent-kit.git && cd local-agent-kit
 python3.12 -m venv .venv
-.venv/bin/python -m pip install -e ".[dev,rag]"   # core + tests + vector store
+.venv/bin/python -m pip install -e ".[dev,rag,web,study]"
+
+cp config.example.yaml config.yaml        # map the roles to models from `ollama list`
+ollama pull qwen3:8b && ollama pull nomic-embed-text
+.venv/bin/python servers/rag_server.py --ingest docs/
+
+.venv/bin/lag serve                       # console at http://127.0.0.1:8765
 ```
 
-> **`mcp` SDK version:** this repo runs on **mcp 2.0.0**, which renamed the high-level
-> server class `FastMCP` → `mcp.server.mcpserver.MCPServer` and `Tool.inputSchema` →
-> `input_schema`. Both servers and the bridge import either spelling via `try/except`,
-> so the kit also runs on mcp 1.x. Most tutorials are still on 1.x — check `pip show mcp`.
+Use Python 3.12: macOS ships 3.14 as `python3`, and `chromadb` has no 3.14 wheel yet.
+Run `lag` from the repo root, because its state folders are relative to the working
+directory.
+
+## Commands
+
+```bash
+lag run "what is this project?"           # one agent, local tools
+lag run "same thing" --mcp                # same tools, over the MCP boundary
+lag pipeline "design a url shortener"     # staged agents
+lag serve                                 # web console and goal queue
+lag agent new                             # then: list | start | status | stop
+lag study add <course> <path>             # then: ask | quiz | cards | review
+```
 
 ## Models
 
-Set per machine in `config.yaml` (roles → tags; personas name only a role). The M4
-runs a `qwen3:14b` orchestrator comfortably and `num_ctx` up to 32768 cheaply; the
-CPU-only box stays on smaller models and a tighter window. Avoid R1 distills as
-orchestrators — weak at structured output, and the thinking tokens kill loop latency.
+Bring your own. Personas name a role, and `config.yaml` maps each role to any model from
+your `ollama list`. Nothing is hardcoded: the console's model picker reads your installed
+models live from Ollama, and asks each one whether it supports tools and thinking.
+
+| Role | Used by | Example |
+|------|---------|---------|
+| orchestrator | architect, senior dev (plans and routes) | your strongest tool-capable model |
+| worker, coder, fast | the other agents | `qwen3:8b` |
+| embed | retrieval only | `nomic-embed-text` |
+
+Pick models that support tools (`ollama show <tag>`). Pointing the downstream roles at
+one model means no reload between stages. The measurements above used a 9B Qwen 3.5
+build as the orchestrator and `qwen3:8b` for the rest.
+
+## Security notes
+
+- **Supervised runs are not sandboxed.** `lag run` and `lag pipeline` use the host shell,
+  by design, on a single-user machine. Only unattended work (agent mode and goals) is
+  confined.
+- **Two tools reach the internet:** `web_search` (keyless DuckDuckGo) and `http_fetch`.
+  `http_fetch` only allows public addresses and re-checks every redirect.
+- **Sandboxed agents reach the public internet by default**, through the proxy. Create
+  an agent with `--no-network` to seal it.
+
+## Tests
+
+470 tests: the loop, the MCP bridge, the sandbox and egress proxy (with real containers
+when Docker is running), the goal queue, and the console. The console is checked in jsdom.
+
+```bash
+.venv/bin/python -m pytest
+cd tests/js && npm install                # enables the console tests
+```
+
+`STATUS.md` has the full current state, measurements and what's left.
 
 ## License
 
