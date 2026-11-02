@@ -255,4 +255,18 @@ class OllamaClient:
                               "content": humanise(str(result), 2000)})
                 messages.append({"role": "tool", "tool_name": name, "content": str(result)})
 
-        return "(stopped: hit max_iters without a final answer)"
+        # Out of turns while still calling tools. Everything gathered so far is in
+        # `messages`, so ask once for an answer with the tools withdrawn: a model that
+        # cannot call a tool has to write one. Failing the run here threw that work away.
+        if on_event:
+            on_event({"type": "final_answer_nudge", "max_iters": max_iters})
+        messages.append({"role": "user", "content": (
+            "You have used all your tool turns. Do not call any more tools. Answer now, "
+            "as completely as you can from what you have already gathered, and say "
+            "briefly what you could not check.")})
+        try:
+            msg = self._turn(messages, None, on_event)
+            answer = clean_text(msg.content or "")
+        except Exception:  # noqa: BLE001 - fall back to the old stop message
+            answer = ""
+        return answer or "(stopped: hit max_iters without a final answer)"

@@ -7,7 +7,7 @@ what's left. Working rules for Claude Code live in `CLAUDE.md`.
 
 ## Where it stands
 
-The six original phases are done, and the kit has grown well past them. **491 tests pass**
+The six original phases are done, and the kit has grown well past them. **518 tests pass**
 with Docker running (four real-container tests skip without it). Primary box is the **MacBook Air M4**;
 the CPU-only Ubuntu machine it was built on is secondary.
 
@@ -82,6 +82,22 @@ facts share one collection and one ranking; every turn searches it first. Indexi
 safely without `chromadb` or an embedder. `src/lag/rag.py` holds the retrieval core;
 `rag_server.py` is just the protocol wrapper.
 
+### One model in memory: warm-up and sharing
+
+- **Warm-up.** `lag serve` loads the chat (`worker`) model in a background thread at
+  startup, generating one token at the chat's own `num_ctx`, so the first message skips
+  the 5-7 s cold load. One token rather than an empty prompt: on the MLX engine the first
+  real generation after a load also sets up the GPU kernels. `LAG_WARM=0` turns it off
+  (the test suite sets it in `tests/conftest.py`).
+- **Chat shares the running goal's model.** The goal runner tracks the model its current
+  stage is on; while a goal runs, `/api/stream` swaps the chat onto that model and says so
+  (`shared_model` event). A different model would evict the goal's and the two would swap
+  at a cold load each. Chat is not blocked: same-model requests share Ollama.
+- **Still open:** the first messages after a start take 5-7 s, then about 2.6 s. The model
+  is not reloading (load 0.00 s); each message re-reads ~1,400 tokens of tool schemas, and
+  Ollama's MLX prompt cache reuses that prefix inconsistently (0.07 s on a hit, ~3 s on a
+  miss). The first chat also starts the MCP servers.
+
 ### Live model list
 
 `GET /api/models/watch` (SSE) fingerprints Ollama every 3s — `/api/tags` names + digests
@@ -138,7 +154,22 @@ to make the orchestrator's routing decisions by hand and then only pre-filled th
 - **On fail:** `stop` pauses the queue, `skip` carries on, `ask` pauses with the failed goal
   in the now-working card and retry / carry-on buttons. A run that gave up on malformed
   turns (`(stopped: …`) counts as failed.
-- "Done when" is passed to the agents as the bar to aim for. **Nothing verifies it yet.**
+- **"Done when" is checked.** After the work, `check_done()` asks the last stage's model
+  (already resident, so no reload) for a one-line verdict: `MET` or `NOT MET: <gap>`. Not
+  met sends that stage back once with the gap; still not met fails the goal with
+  `done-when not met: …`. An unreadable verdict or a judge error records `unchecked` and
+  counts as done, so a flaky judge never sinks good work. The verdict is kept on the goal
+  (`check`) and shown in the console, the activity window and `lag goals`.
+- **Out of turns is not a failure.** When an agent spends all `max_iters` on tool calls,
+  `OllamaClient.run` asks once more with tools withdrawn ("answer from what you have"),
+  so the gathered work becomes an answer instead of `(stopped: hit max_iters …)`.
+- **`lag goals` (terminal).** `add` (with `--done-when`, `--agents`), `ls`, `show`, `run`,
+  `pause`, `skip`, `rm`, `retry`, `move`, `clear`, `set`, and `watch`, which streams the
+  live run (stages, tool calls, tokens, nudges, the check, outcomes). It talks to the
+  running `lag serve` (`LAG_URL`, default `http://127.0.0.1:8765`) instead of opening
+  `agents/goals.json`, so the queue keeps one writer. Goals are addressed by id prefix or
+  list position. An empty `--agents` is an error here and in `lag pipeline`, not a silent
+  fall back to the default roster.
 
 ### Agent mode
 
@@ -255,7 +286,7 @@ list live from Ollama.
    lists installed tags, their capabilities and which roles use them.
 3. For development add the test extras: `.venv/bin/python -m pip install -e ".[dev]"`.
 4. Start **Docker Desktop** if you want agent mode (and the 2 sandbox tests).
-5. `.venv/bin/python -m pytest` — expect 491 passing with Docker running; without it, 4 real-container tests skip.
+5. `.venv/bin/python -m pytest` — expect 518 passing with Docker running; without it, 4 real-container tests skip.
    `cd tests/js && npm install` enables the console boot test.
 
 ```bash
@@ -343,11 +374,12 @@ Every one of these was found by running the code, not reading it.
 
 ## What's left
 
-- **Going public:** license and path cleanup are merged (#9). Left: README refresh with a
-  console GIF, a `lag goals` CLI, a history scrub (junk files, commit email), then flip the
-  repo public.
-- **Goal "done when" is unchecked.** A verification pass (the lead judging the answer
-  against it) would make `done` mean met, not just finished.
+- **Going public:** license and path cleanup are merged (#9); README refresh (#10),
+  `lag setup` (#11) and `lag goals` are in review. Left: a history scrub (junk files,
+  commit email, old model names), then flip the repo public.
+- **Chat latency on MLX:** prompt-cache misses on the tool-schema prefix (see above).
+- **The done-when judge is the working model judging its own answer.** Cheap (no reload)
+  but lenient by nature; a second model or a stricter rubric would be stronger.
 - **Supervised `run_shell` is unsandboxed** — `shell=True`, no path allow-list, 60s timeout.
   Accepted on a single-user box; only agent mode is confined. Revisit before anything
   multi-user.

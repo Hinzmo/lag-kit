@@ -283,3 +283,70 @@ def test_model_signature_includes_digests_and_residents(monkeypatch):
         def list(self): raise ConnectionError
     monkeypatch.setattr(web.ollama, "Client", Down)
     assert web._models_signature({}) is None
+
+
+# ── one model in memory: warm-up and sharing ─────────────────────────────────
+
+def test_warm_loads_the_chat_model_with_the_chat_window(monkeypatch):
+    from lag import web
+    calls = []
+
+    class C:
+        def __init__(self, host=None): pass
+        def generate(self, **kw): calls.append(kw)
+    monkeypatch.setattr(web.ollama, "Client", C)
+    monkeypatch.setattr(web, "load_config", lambda: {
+        "models": {"worker": "m:1"},
+        "ollama": {"num_ctx": 8192, "num_ctx_by_model": {"m:1": 16384}, "keep_alive": "30m"}})
+    web._warm()
+    assert calls == [{"model": "m:1", "prompt": "ok", "keep_alive": "30m",
+                      "options": {"num_ctx": 16384, "num_predict": 1}}]
+
+
+def test_warm_never_raises(monkeypatch):
+    from lag import web
+
+    def boom():
+        raise RuntimeError("no config")
+    monkeypatch.setattr(web, "load_config", boom)
+    web._warm()
+
+
+def test_chat_shares_the_running_goals_model(monkeypatch):
+    import json as _json
+    from types import SimpleNamespace as NS
+
+    from lag import web
+    seen = {}
+
+    class FakeClient:
+        @classmethod
+        def from_config(cls, cfg, model):
+            seen["model"] = model
+            return NS(run=lambda prompt, tool_provider=None, on_event=None: "ok")
+    monkeypatch.setattr(web, "OllamaClient", FakeClient)
+    monkeypatch.setattr(web, "_provider", lambda cfg, mcp: object())
+    monkeypatch.setitem(web._goal_runner_cache, "runner",
+                        NS(current="g1", model="gemma4:e4b"))
+    r = client.post("/api/stream", json={"prompt": "hi", "mode": "solo", "model": "other:7b"})
+    events = [_json.loads(line[5:]) for line in r.text.splitlines() if line.startswith("data:")]
+    assert seen["model"] == "gemma4:e4b"
+    assert {"type": "shared_model", "model": "gemma4:e4b"} in events
+
+
+def test_chat_keeps_its_model_when_no_goal_runs(monkeypatch):
+    from types import SimpleNamespace as NS
+
+    from lag import web
+    seen = {}
+
+    class FakeClient:
+        @classmethod
+        def from_config(cls, cfg, model):
+            seen["model"] = model
+            return NS(run=lambda prompt, tool_provider=None, on_event=None: "ok")
+    monkeypatch.setattr(web, "OllamaClient", FakeClient)
+    monkeypatch.setattr(web, "_provider", lambda cfg, mcp: object())
+    monkeypatch.setitem(web._goal_runner_cache, "runner", NS(current=None, model=""))
+    client.post("/api/stream", json={"prompt": "hi", "mode": "solo", "model": "other:7b"})
+    assert seen["model"] == "other:7b"

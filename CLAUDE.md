@@ -18,7 +18,7 @@ All six original phases (foundation → ReAct loop → MCP server → MCP client
 pipeline → personas → RAG) are done and smoke-tested. Work since then has added agent
 mode, a live web console, container sandboxing for agents, and a study mode.
 
-**Tests: 491 pass with Docker running.** Without it the four real-container tests in
+**Tests: 518 pass with Docker running.** Without it the four real-container tests in
 `test_sandbox.py` skip (start Docker Desktop to run them). `tests/test_console_boot.py` additionally needs
 node + jsdom (`cd tests/js && npm install`) and skips without them.
 
@@ -186,6 +186,7 @@ real traceback.
 .venv/bin/lag serve                                # web console on 127.0.0.1
 
 .venv/bin/lag agent new | list | show | start | status | stop | enable | disable | delete
+.venv/bin/lag goals add | ls | show | run | pause | skip | rm | retry | move | clear | set | watch
 .venv/bin/lag study add | ask | quiz | cards | review | status
 
 .venv/bin/python servers/tools_server.py           # standalone; shows real tracebacks

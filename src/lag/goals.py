@@ -75,10 +75,11 @@ class Goal:
     added: str = ""
     started: str = ""
     finished: str = ""
+    check: str = ""                  # the done-when verdict: met | not met: … | unchecked: …
 
     def task(self) -> str:
-        """The text the pipeline sees. "Done when" rides along as guidance — nothing
-        verifies it yet, so it is phrased as the bar to aim for, not a check.
+        """The text the pipeline sees. "Done when" rides along as the bar to aim for,
+        and the answer is checked against it afterwards (see check_done).
 
         The unattended note comes first because nobody is there to answer: a model that
         ends on "which would you prefer?" has stopped, and the queue would count it done."""
@@ -137,6 +138,44 @@ def nudge(goal_task: str, answer: str, why: str) -> str:
             "then carry it out now and give the finished result.")
 
 
+_VERDICT = re.compile(r"^\W*(NOT\s+MET|MET)\b\W*(.*)", re.I | re.S)
+
+
+def check_done(chat, goal: "Goal", answer: str) -> tuple[str, str]:
+    """Judge an answer against the goal's "done when". Returns (verdict, reason).
+
+    `chat(prompt) -> str` is one tool-free model call, injected so tests need no
+    Ollama. Verdict is "met", "not met" or "unchecked"; a reply that cannot be read
+    is "unchecked" rather than a failure, so a flaky judge never sinks good work.
+    """
+    if not goal.done_when:
+        return "unchecked", "no done-when given"
+    prompt = (
+        "You are checking whether finished work meets its finish line.\n\n"
+        f"Goal: {goal.text}\nDone when: {goal.done_when}\n\n"
+        f"The answer:\n{(answer or '')[-6000:]}\n\n"
+        "Does the answer meet the done-when condition? Judge only that condition, "
+        "strictly but fairly. Reply with ONE line: MET, or NOT MET: <the specific "
+        "thing that is missing>.")
+    try:
+        reply = (chat(prompt) or "").strip()
+    except Exception as e:  # noqa: BLE001
+        return "unchecked", f"the check failed: {type(e).__name__}: {e}"
+    m = _VERDICT.match(reply)
+    if not m:
+        return "unchecked", f"unreadable verdict: {reply[:120]!r}"
+    if m.group(1).upper().startswith("NOT"):
+        return "not met", (m.group(2).strip().splitlines() or ["no reason given"])[0][:300]
+    return "met", ""
+
+
+def fix_turn(goal_task: str, answer: str, done_when: str, reason: str) -> str:
+    """The follow-up turn for an answer the done-when check rejected."""
+    return (f"{goal_task}\n\nYour previous reply:\n{answer}\n\n"
+            f"A check against the goal's finish line (\"{done_when}\") found it not met: "
+            f"{reason}. Fix exactly that, then give the complete finished result.")
+
+
 class GoalRunner:
     """The queue, its settings, and the worker thread that drains it.
 
@@ -161,6 +200,7 @@ class GoalRunner:
         self.pausing = False      # finish the current goal, then stop
         self.current: str | None = None
         self.stage: str = ""      # the stage now talking, for a console that reconnects
+        self.model: str = ""      # the model that stage runs on; chat shares it (web.py)
         self.awaiting: str | None = None   # failed goal waiting on you (fail = ask)
         self.note = ""            # why the queue last stopped, in words
         self._load()
@@ -395,11 +435,16 @@ class GoalRunner:
                     self._changed()
                 elif kind == "stage":
                     self.stage = ev.get("name", "")
+                    self.model = ev.get("model", "") or self.model
                     self._changed()
+                elif kind == "routing":
+                    self.model = ev.get("model", "") or self.model
             self._publish({**ev, "goal": g.id})
 
         try:
-            route, answer = self._execute(g, settings, emit)
+            res = self._execute(g, settings, emit)
+            route, answer = res[0], res[1]
+            verdict = res[2] if len(res) > 2 else None
         except Cancelled as c:
             return str(c), ""
         except SandboxUnavailable as e:
@@ -416,11 +461,16 @@ class GoalRunner:
         why = stopped_short(g.answer)
         if why:                              # still handing it back after the nudges
             return "failed", f"not finished: {why}"
+        if verdict:
+            kind, reason = verdict
+            g.check = kind if kind == "met" else f"{kind}: {reason}"
+            if kind == "not met":
+                return "failed", f"done-when not met: {reason}"
         return "done", ""
 
     def _finish(self, g: Goal, outcome: str, detail: str) -> None:
         g.finished = _now()
-        self.current, self.stage, self._cancel = None, "", None
+        self.current, self.stage, self.model, self._cancel = None, "", "", None
         if outcome == "remove":
             if g in self.goals:
                 self.goals.remove(g)
@@ -443,6 +493,21 @@ class GoalRunner:
         if self.pausing:
             self._stop("paused")
         self._changed()
+
+
+def judge_chat(cfg: dict, model: str):
+    """One tool-free, non-thinking call on `model`, for check_done."""
+    import ollama
+    client = ollama.Client(host=cfg.get("ollama_base_url", "http://127.0.0.1:11434"))
+    num_ctx = ((cfg.get("ollama") or {}).get("num_ctx_by_model") or {}).get(
+        model, (cfg.get("ollama") or {}).get("num_ctx", 8192))
+
+    def chat(prompt: str) -> str:
+        r = client.chat(model=model, messages=[{"role": "user", "content": prompt}],
+                        think=False, options={"num_ctx": num_ctx, "num_predict": 200,
+                                              "temperature": 0})
+        return r.message.content or ""
+    return chat
 
 
 def pipeline_executor(cfg: dict, provider_factory):
@@ -483,7 +548,22 @@ def pipeline_executor(cfg: dict, provider_factory):
                       "role": "stage", "loaded": False})
                 answer = last.run(pipe._fit(nudge(task, answer, why), last, emit),
                                   on_event=emit)
-            return [s.name for s in pipe.stages], answer
+            verdict = None
+            if goal.done_when and not stopped_short(answer):
+                # Judged on the last stage's model: it is already resident, so the
+                # check costs one short call and no reload.
+                chat = judge_chat(cfg, last.model)
+                verdict = check_done(chat, goal, answer)
+                emit({"type": "check", "verdict": verdict[0], "reason": verdict[1]})
+                if verdict[0] == "not met":
+                    emit({"type": "stage", "name": last.name, "model": last.model,
+                          "role": "stage", "loaded": False})
+                    answer = last.run(pipe._fit(fix_turn(task, answer, goal.done_when,
+                                                         verdict[1]), last, emit),
+                                      on_event=emit)
+                    verdict = check_done(chat, goal, answer)
+                    emit({"type": "check", "verdict": verdict[0], "reason": verdict[1]})
+            return [s.name for s in pipe.stages], answer, verdict
         finally:
             sandbox.stop()
     return execute

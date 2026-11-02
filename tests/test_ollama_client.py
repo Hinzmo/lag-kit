@@ -180,3 +180,48 @@ class TestToolDegradation:
         """Asking a non-thinking tag to think is a request it can reject outright."""
         c = self._client(monkeypatch, ["completion", "tools"], think=True)
         assert c.think is None
+
+
+class TestOutOfTurns:
+    """An agent that spends every turn on tools gets one tool-free turn to answer,
+    instead of the run failing with the work it gathered thrown away."""
+
+    class Tools:
+        def schemas(self):
+            return [{"type": "function", "function": {"name": "t"}}]
+
+        def call(self, name, args):
+            return "data"
+
+    def _call(self):
+        fn = SimpleNamespace(name="t", arguments={})
+        return SimpleNamespace(content="", tool_calls=[SimpleNamespace(function=fn)])
+
+    def _client(self, monkeypatch, last):
+        c = OllamaClient(model="m", host="http://x")
+        c.has_tools = True
+        seen = []
+
+        def fake_turn(messages, schemas, on_event):
+            seen.append(schemas)
+            if schemas is None:
+                if isinstance(last, Exception):
+                    raise last
+                return SimpleNamespace(content=last, tool_calls=None)
+            return self._call()
+        monkeypatch.setattr(c, "_turn", fake_turn)
+        return c, seen
+
+    def test_the_last_turn_has_no_tools_and_its_answer_is_returned(self, monkeypatch):
+        c, seen = self._client(monkeypatch, "here is what I found")
+        events = []
+        out = c.run("go", tool_provider=self.Tools(), max_iters=3, on_event=events.append)
+        assert out == "here is what I found"
+        assert seen[:3] != [None] * 3 and seen[-1] is None and len(seen) == 4
+        assert any(e["type"] == "final_answer_nudge" for e in events)
+
+    def test_an_empty_or_failed_last_turn_keeps_the_old_message(self, monkeypatch):
+        for last in ("", RuntimeError("down")):
+            c, _ = self._client(monkeypatch, last)
+            out = c.run("go", tool_provider=self.Tools(), max_iters=2, verbose=False)
+            assert out == "(stopped: hit max_iters without a final answer)"

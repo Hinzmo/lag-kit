@@ -59,6 +59,11 @@ def pipeline(
     change of tag costs a full cold reload (~5s on this box).
     """
     from .pipeline import Pipeline
+    if agents is not None and not [a for a in agents.split(",") if a.strip()]:
+        # An empty --agents used to fall through to routing or the default roster,
+        # running a team the caller never asked for.
+        typer.echo("--agents was given but names no agents. Omit it to let the orchestrator pick.", err=True)
+        raise typer.Exit(1)
     cfg = load_config()
 
     # With --mcp, all stages share ONE provider backed by both MCP servers, so the lead
@@ -233,6 +238,9 @@ def models():
     for t in missing:
         typer.echo(f"{t:<{w}}{'NOT INSTALLED':<16}{', '.join(used[t])}   (run: lag setup)")
 
+
+from .goals_cli import app as goals_app  # noqa: E402
+app.add_typer(goals_app, name="goals")
 
 agent_app = typer.Typer(help="Agent mode: one persona pursuing a goal on its own, 24/7 if you like.")
 app.add_typer(agent_app, name="agent")

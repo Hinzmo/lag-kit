@@ -401,6 +401,16 @@ def fake_world(monkeypatch):
     monkeypatch.setattr(sandbox_mod.Sandbox, "stop",
                         lambda self: calls.setdefault("stopped", True))
     monkeypatch.setattr(goals_mod, "WORKSPACE", goals_mod.AGENT_DIR / "ws-test")
+    # The done-when judge is one model call; scripted here so no test reaches Ollama.
+    calls["verdicts"] = []
+    calls["judged"] = []
+
+    def judge_chat(cfg, model):
+        def chat(prompt):
+            calls["judged"].append(prompt)
+            return calls["verdicts"].pop(0) if calls["verdicts"] else "MET"
+        return chat
+    monkeypatch.setattr(goals_mod, "judge_chat", judge_chat)
 
     def routed(task, cfg, provider, on_event=None, model_override=None):
         calls["routed"] = model_override
@@ -419,7 +429,7 @@ def test_auto_goals_are_routed_by_the_orchestrator(fake_world, tmp_path, monkeyp
     monkeypatch.chdir(tmp_path)
     ex = goals_mod.pipeline_executor({}, lambda: object())
     g = goals_mod.Goal(id="1", text="t", done_when="d")
-    route, answer = ex(g, {"plan": False, "model": "qwen3:8b"}, lambda e: None)
+    route, answer, _ = ex(g, {"plan": False, "model": "qwen3:8b"}, lambda e: None)
     assert route == ["research_agent", "dev_agent"] and answer == "answer"
     assert fake_world["routed"] == "qwen3:8b"
     assert FakePipe.last == {"task": g.task(), "plan": False}
@@ -430,7 +440,7 @@ def test_picked_agents_skip_routing(fake_world, tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     ex = goals_mod.pipeline_executor({}, lambda: object())
     g = goals_mod.Goal(id="1", text="t", agents=["dev_agent", "tester_agent"])
-    route, _ = ex(g, {"plan": True, "model": ""}, lambda e: None)
+    route, _, _ = ex(g, {"plan": True, "model": ""}, lambda e: None)
     assert route == ["dev_agent", "tester_agent"]
     assert "routed" not in fake_world
 
@@ -512,7 +522,7 @@ def test_the_last_stage_is_sent_back_to_decide(fake_world, tmp_path, monkeypatch
     events = []
     ex = goals_mod.pipeline_executor({}, lambda: object())
     g = goals_mod.Goal(id="1", text="find slow tests", agents=["analyst_agent"])
-    _, answer = ex(g, {}, events.append)
+    _, answer, _ = ex(g, {}, events.append)
     assert answer == FINISHED
     assert len(pipe.prompts) == 1
     assert ASKED in pipe.prompts[0] and "best serves the goal" in pipe.prompts[0]
@@ -524,6 +534,83 @@ def test_nudges_are_bounded(fake_world, tmp_path, monkeypatch):
     pipe = _asking_world(fake_world, monkeypatch, [ASKED] * 5)
     ex = goals_mod.pipeline_executor({}, lambda: object())
     g = goals_mod.Goal(id="1", text="t", agents=["analyst_agent"])
-    _, answer = ex(g, {}, lambda e: None)
+    _, answer, _ = ex(g, {}, lambda e: None)
     assert len(pipe.prompts) == goals_mod.NUDGES
     assert goals_mod.stopped_short(answer)             # the runner then marks it failed
+
+
+
+# ── done-when check ──────────────────────────────────────────────────────────
+
+@pytest.mark.parametrize("reply,want", [
+    ("MET", ("met", "")),
+    ("**MET**", ("met", "")),
+    ("NOT MET: the third bullet names no function", ("not met", "the third bullet names no function")),
+    ("not met - missing the list", ("not met", "missing the list")),
+    ("I think it is probably fine", ("unchecked", "unreadable verdict: 'I think it is probably fine'")),
+])
+def test_check_done_reads_the_verdict(reply, want):
+    g = goals_mod.Goal(id="1", text="t", done_when="each bullet names a function")
+    assert goals_mod.check_done(lambda p: reply, g, "an answer") == want
+
+
+def test_check_done_never_fails_on_a_broken_judge():
+    g = goals_mod.Goal(id="1", text="t", done_when="d")
+
+    def boom(prompt):
+        raise ConnectionError("ollama down")
+    verdict, reason = goals_mod.check_done(boom, g, "a")
+    assert verdict == "unchecked" and "ollama down" in reason
+
+
+def test_check_done_skips_goals_without_a_finish_line():
+    g = goals_mod.Goal(id="1", text="t")
+    assert goals_mod.check_done(lambda p: 1 / 0, g, "a")[0] == "unchecked"
+
+
+def test_a_rejected_answer_is_sent_back_once_with_the_gap(fake_world, tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    # The first answer asks (one nudge), the nudged one finishes, the check rejects it,
+    # and the fix turn's answer passes.
+    pipe = _asking_world(fake_world, monkeypatch, [FINISHED, FINISHED])
+    fake_world["verdicts"] = ["NOT MET: no file named", "MET"]
+    events = []
+    ex = goals_mod.pipeline_executor({}, lambda: object())
+    g = goals_mod.Goal(id="1", text="t", done_when="names the file", agents=["analyst_agent"])
+    _, answer, verdict = ex(g, {}, events.append)
+    assert verdict == ("met", "")
+    assert len(pipe.prompts) == 2 and "no file named" in pipe.prompts[1]
+    assert "names the file" in fake_world["judged"][0]
+    assert [e["verdict"] for e in events if e["type"] == "check"] == ["not met", "met"]
+
+
+def test_the_runner_fails_a_goal_whose_finish_line_is_not_met(tmp_path):
+    r = GoalRunner(lambda g, s, e: (["a"], "an answer", ("not met", "no tests listed")),
+                   tmp_path / "goals.json")
+    r.add("t", done_when="lists the tests")
+    r.run()
+    wait_for(lambda: statuses(r) == ["failed"])
+    g = r.goals[0]
+    assert g.error == "done-when not met: no tests listed" and g.check == "not met: no tests listed"
+
+
+def test_the_runner_records_a_met_check(tmp_path):
+    r = GoalRunner(lambda g, s, e: (["a"], "an answer", ("met", "")), tmp_path / "goals.json")
+    r.add("t", done_when="x")
+    r.run()
+    wait_for(lambda: statuses(r) == ["done"])
+    assert r.goals[0].check == "met"
+
+
+def test_the_runner_tracks_the_running_stages_model(tmp_path):
+    seen = []
+
+    def ex(goal, settings, emit):
+        emit({"type": "stage", "name": "dev_agent", "model": "gemma4:e4b"})
+        seen.append(r.model)
+        return ["dev_agent"], "done"
+    r = GoalRunner(ex, tmp_path / "goals.json")
+    r.add("t")
+    r.run()
+    wait_for(lambda: statuses(r) == ["done"])
+    assert seen == ["gemma4:e4b"] and r.model == ""   # cleared once the goal ends

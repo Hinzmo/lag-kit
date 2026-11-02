@@ -1,3 +1,5 @@
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Phosphor Console</title>
 <style>
 /* ══════════════════════════════════════════════════════════════════════════
@@ -36,7 +38,7 @@
 
   --ink:       #C9FFE2;
   --ink-2:     #7FB79A;
-  --ink-3:     #4A7563;
+  --ink-3:     #62957F;
 
   --glow-s: 0 0 6px rgba(34,232,106,.55);
   --glow-m: 0 0 14px rgba(34,232,106,.40);
@@ -99,13 +101,13 @@ body.novfx .crt{ display:none; }
 }
 .wordmark{ font-size:22px; font-weight:700; letter-spacing:.42em; color:var(--p-core);
   text-shadow:var(--glow-m); text-transform:uppercase; }
-.wordmark small{ display:block; font-size:9px; letter-spacing:.30em; color:var(--ink-3);
+.wordmark small{ display:block; font-size:10px; letter-spacing:.30em; color:var(--ink-3);
   text-shadow:none; font-weight:400; margin-top:2px; }
 
 .mast-meta{ display:flex; gap:var(--s5); margin-left:auto; align-items:center; }
 .meta{ display:flex; flex-direction:column; gap:1px; }
 .meta b{ font-size:12px; color:var(--ink); font-weight:600; font-variant-numeric:tabular-nums; }
-.meta span{ font-size:8.5px; letter-spacing:.22em; color:var(--ink-3); text-transform:uppercase; }
+.meta span{ font-size:10px; letter-spacing:.22em; color:var(--ink-3); text-transform:uppercase; }
 
 .console{ display:grid; grid-template-columns:minmax(0,1fr) 288px; min-height:0; }
 .rail{ display:flex; flex-direction:column; min-height:0; background:var(--panel); }
@@ -114,7 +116,7 @@ body.novfx .crt{ display:none; }
 
 .phead{
   display:flex; align-items:center; gap:var(--s2); padding:7px var(--s3);
-  border-bottom:1px solid var(--rule); font-size:9px; letter-spacing:.26em;
+  border-bottom:1px solid var(--rule); font-size:10px; letter-spacing:.26em;
   text-transform:uppercase; color:var(--ink-3); background:var(--panel-2); flex:0 0 auto;
 }
 .phead .dot{ width:5px; height:5px; border-radius:50%; background:var(--p); box-shadow:var(--glow-s); }
@@ -137,11 +139,11 @@ body.novfx .crt{ display:none; }
 .cmdbar{ border-bottom:1px solid var(--rule); background:var(--panel-2);
   padding:var(--s3) var(--s4); display:flex; flex-direction:column; gap:var(--s3); }
 .pipelinerow{ display:flex; align-items:center; gap:var(--s3); flex-wrap:wrap; }
-.pipelinerow .lbl{ font-size:8.5px; letter-spacing:.26em; text-transform:uppercase; color:var(--ink-3); }
+.pipelinerow .lbl{ font-size:10px; letter-spacing:.26em; text-transform:uppercase; color:var(--ink-3); }
 .pipelinerow .lbl b{ color:var(--p); font-weight:400; }
 .modes{ display:flex; gap:var(--s1); }
 .mode{
-  font-family:var(--mono); font-size:9.5px; letter-spacing:.16em; text-transform:uppercase;
+  font-family:var(--mono); font-size:10.5px; letter-spacing:.16em; text-transform:uppercase;
   padding:5px 12px; background:transparent; cursor:pointer;
   border:1px solid var(--rule); color:var(--ink-3); transition:all .18s ease;
 }
@@ -162,8 +164,8 @@ body.novfx .crt{ display:none; }
   border:0; cursor:pointer; padding:7px 9px; font-family:var(--mono); color:var(--ink-2); }
 .agentmenu button:hover{ background:color-mix(in srgb, var(--p) 10%, transparent); color:var(--ink); }
 .agentmenu .an{ font-size:11px; }
-.agentmenu .ar{ font-size:9px; color:var(--ink-3); margin-top:1px; }
-.agentmenu .am{ font-size:9px; color:var(--p-mid); letter-spacing:.08em; }
+.agentmenu .ar{ font-size:10px; color:var(--ink-3); margin-top:1px; }
+.agentmenu .am{ font-size:10px; color:var(--p-mid); letter-spacing:.08em; }
 
 /* target chip — "next message goes to this one agent", with a clear button */
 .targetchip{ display:inline-flex; align-items:center; gap:6px; flex:none;
@@ -174,7 +176,7 @@ body.novfx .crt{ display:none; }
 
 /* stage breadcrumb — the live progress the roster used to show */
 .stageflow{ display:flex; flex-wrap:wrap; align-items:center; gap:6px;
-  font-family:var(--mono); font-size:9px; letter-spacing:.14em; text-transform:uppercase; }
+  font-family:var(--mono); font-size:10px; letter-spacing:.14em; text-transform:uppercase; }
 .sflow-item{ color:var(--ink-3); border:1px solid var(--rule); padding:2px 7px; }
 .sflow-item[data-state="active"]{ color:var(--void); background:var(--p);
   border-color:var(--p); box-shadow:var(--glow-s); }
@@ -198,7 +200,7 @@ body.novfx .crt{ display:none; }
 #chat{ padding:var(--s5) var(--s5) var(--s4); display:flex; flex-direction:column; gap:var(--s5);
   max-width:860px; margin:0 auto; width:100%; }
 .msg{ display:flex; flex-direction:column; gap:var(--s2); }
-.who{ font-size:8.5px; letter-spacing:.24em; text-transform:uppercase; color:var(--ink-3); }
+.who{ font-size:10px; letter-spacing:.24em; text-transform:uppercase; color:var(--ink-3); }
 .msg-user .who{ color:var(--p); }
 .msg-user .txt{
   font-size:15px; color:var(--ink); border-left:2px solid var(--p);
@@ -240,7 +242,11 @@ body.novfx .crt{ display:none; }
 
 /* ── telemetry ──────────────────────────────────────────────────────────── */
 .tsec{ border-bottom:1px solid var(--rule); padding:var(--s3); }
-.tlabel{ font-size:8.5px; letter-spacing:.24em; text-transform:uppercase; color:var(--ink-3); margin-bottom:var(--s2); }
+.mlist-tog{ background:none; border:1px solid var(--rule); color:var(--ink-2); cursor:pointer;
+  font-family:var(--mono); font-size:10px; letter-spacing:.08em; padding:4px 8px; margin:6px 0 4px; }
+.mlist-tog:hover{ color:var(--ink); border-color:var(--p-deep); }
+.mlist-tog:focus-visible{ outline:2px solid var(--p); outline-offset:1px; }
+.tlabel{ font-size:10px; letter-spacing:.24em; text-transform:uppercase; color:var(--ink-3); margin-bottom:var(--s2); }
 .row{ display:flex; align-items:center; gap:var(--s2); padding:3px 0; font-size:11px; }
 .row .nm{ color:var(--ink-2); min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .row .vl{ margin-left:auto; color:var(--ink); font-variant-numeric:tabular-nums; flex:0 0 auto; }
@@ -266,22 +272,22 @@ body.novfx .crt{ display:none; }
 .reftog{ display:flex; align-items:center; gap:var(--s2); width:100%; cursor:pointer;
   background:none; border:none; padding:0; font:inherit; text-align:left; }
 .reftog .tlabel{ margin-bottom:0; }
-.reftog .refhint{ font-size:8.5px; letter-spacing:.14em; text-transform:uppercase; color:var(--p-deep); }
-.reftog .refchev{ margin-left:auto; font-size:8.5px; letter-spacing:.14em; text-transform:uppercase; color:var(--ink-3); }
+.reftog .refhint{ font-size:10px; letter-spacing:.14em; text-transform:uppercase; color:var(--p-deep); }
+.reftog .refchev{ margin-left:auto; font-size:10px; letter-spacing:.14em; text-transform:uppercase; color:var(--ink-3); }
 .reftog:hover .tlabel, .reftog:hover .refchev{ color:var(--ink-2); }
 .reftog:focus-visible{ outline:2px solid var(--p); outline-offset:2px; }
 .refbody{ margin-top:var(--s3); display:flex; flex-direction:column; gap:var(--s3); }
 .tref.min .refbody{ display:none; }
 
 .statusbar{ display:flex; align-items:center; gap:var(--s4); padding:5px var(--s5);
-  border-top:1px solid var(--rule); background:var(--panel-2); font-size:9.5px;
+  border-top:1px solid var(--rule); background:var(--panel-2); font-size:10.5px;
   letter-spacing:.14em; text-transform:uppercase; color:var(--ink-3); }
 .statusbar .sep{ color:var(--rule); }
 .statusbar .ok{ color:var(--p); } .statusbar .wn{ color:var(--amber); }
 .statusbar .er{ color:var(--fault); } .statusbar .rg{ color:var(--rag); }
 .statusbar .right{ margin-left:auto; display:flex; gap:var(--s4); align-items:center; }
 .statusbar button{
-  font-family:var(--mono); font-size:9.5px; letter-spacing:.14em; text-transform:uppercase;
+  font-family:var(--mono); font-size:10.5px; letter-spacing:.14em; text-transform:uppercase;
   background:none; border:1px solid var(--rule); color:var(--ink-3);
   padding:2px 8px; cursor:pointer;
 }
@@ -296,25 +302,30 @@ body.novfx .crt{ display:none; }
 .g-head{ display:flex; flex-wrap:wrap; align-items:center; gap:var(--s3);
   padding:var(--s2) var(--s3); border-bottom:1px solid var(--rule); }
 .g-fold{ background:none; border:0; padding:4px 0; cursor:pointer; font-family:var(--mono);
-  font-size:8.5px; letter-spacing:.26em; text-transform:uppercase; color:var(--ink-3);
+  font-size:10px; letter-spacing:.26em; text-transform:uppercase; color:var(--ink-3);
   display:flex; gap:var(--s2); align-items:center; }
 .g-fold b{ color:var(--p); font-weight:400; }
 .g-fold:focus-visible{ outline:1px solid var(--p); outline-offset:2px; }
 .g-ctl{ display:flex; flex-wrap:wrap; gap:var(--s3); align-items:center; margin-left:auto; }
-.g-k{ font-size:8.5px; letter-spacing:.2em; text-transform:uppercase; color:var(--ink-3);
+.g-k{ font-size:10px; letter-spacing:.2em; text-transform:uppercase; color:var(--ink-3);
   align-self:center; margin-right:2px; }
+.g-set{ display:flex; align-items:center; gap:6px; }
+.g-set select{ background:var(--panel-2); color:var(--ink); border:1px solid var(--rule);
+  font-family:var(--mono); font-size:11px; padding:5px 6px; }
+.g-set select:focus-visible{ outline:2px solid var(--p); outline-offset:1px; }
 .mode.g-go{ color:var(--void); background:var(--p); border-color:var(--p); font-weight:700; }
 .mode.g-go:hover{ background:var(--p-core); border-color:var(--p-core); color:var(--void); }
 .mode.g-warn{ color:var(--fault); border-color:color-mix(in srgb, var(--fault) 40%, transparent); }
 .mode.g-warn:hover{ border-color:var(--fault); color:var(--fault); }
-.mode.g-ico{ padding:5px 8px; line-height:1; }
+.mode.g-ico{ padding:5px 8px; line-height:1; color:var(--ink-2); }
+.mode.g-ico:disabled{ color:var(--ink-3); opacity:.5; }
 
 .g-now{ padding:var(--s3); border-bottom:1px solid var(--rule);
   background:color-mix(in srgb, var(--p) 6%, var(--panel)); display:flex;
   flex-direction:column; gap:var(--s2); }
 .g-now.failed{ background:color-mix(in srgb, var(--fault) 7%, var(--panel)); }
 .g-now .row{ display:flex; flex-wrap:wrap; gap:var(--s2); align-items:center; }
-.g-now .lab{ font-size:8.5px; letter-spacing:.26em; text-transform:uppercase; color:var(--p-core); }
+.g-now .lab{ font-size:10px; letter-spacing:.26em; text-transform:uppercase; color:var(--p-core); }
 .g-now.failed .lab{ color:var(--fault); }
 .g-now .gt{ font-size:13.5px; color:var(--ink); }
 .g-now .acts{ margin-left:auto; display:flex; gap:var(--s1); }
@@ -323,12 +334,12 @@ body.novfx .crt{ display:none; }
 .g-dot.paused{ background:var(--amber); box-shadow:none; animation:none; }
 @keyframes gpulse{ 0%,100%{ opacity:1 } 50%{ opacity:.35 } }
 @media (prefers-reduced-motion: reduce){ .g-dot{ animation:none; } }
-.g-stg{ font-size:9.5px; letter-spacing:.1em; padding:3px 8px; border:1px solid var(--rule);
+.g-stg{ font-size:10.5px; letter-spacing:.1em; padding:3px 8px; border:1px solid var(--rule);
   color:var(--ink-3); white-space:nowrap; }
 .g-stg[data-st="done"]{ color:var(--p-mid); border-color:var(--p-deep); }
 .g-stg[data-st="now"]{ color:var(--void); background:var(--p); border-color:var(--p); box-shadow:var(--glow-s); }
 .g-stg[data-st="plan"]{ color:var(--rag); border-color:var(--rag-deep); }
-.g-pill{ font-size:8.5px; letter-spacing:.2em; text-transform:uppercase; padding:2px 7px;
+.g-pill{ font-size:10px; letter-spacing:.2em; text-transform:uppercase; padding:2px 7px;
   border:1px solid var(--rule); color:var(--ink-2); white-space:nowrap; }
 .g-pill[data-s="running"]{ color:var(--void); background:var(--p); border-color:var(--p); }
 .g-pill[data-s="pausing"]{ color:var(--amber); border-color:var(--amber-deep); }
@@ -340,11 +351,12 @@ body.novfx .crt{ display:none; }
   border-bottom:1px solid var(--rule); }
 .g-note.err{ color:var(--fault); }
 
-.g-body{ max-height:30vh; overflow:auto; }
+.g-body{ }
+.g-add[hidden]{ display:none; }
 .g-add{ padding:var(--s3); display:flex; flex-direction:column; gap:var(--s2);
   border-bottom:1px solid var(--rule); background:var(--panel-2); }
 .g-add .line{ display:flex; flex-wrap:wrap; gap:var(--s2); align-items:center; }
-.g-add label{ font-size:8.5px; letter-spacing:.24em; text-transform:uppercase; color:var(--ink-3);
+.g-add label{ font-size:10px; letter-spacing:.24em; text-transform:uppercase; color:var(--ink-3);
   min-width:86px; }
 .g-in{ flex:1 1 260px; min-width:0; background:var(--void); border:1px solid var(--rule);
   color:var(--ink); font-family:var(--mono); font-size:12.5px; padding:7px 9px; outline:none; }
@@ -354,7 +366,7 @@ body.novfx .crt{ display:none; }
   border:1px solid var(--rule); background:var(--panel); }
 .g-pick .hint{ flex-basis:100%; font-size:10.5px; color:var(--ink-3); margin-bottom:2px; }
 .g-sec{ display:flex; align-items:center; gap:var(--s2); padding:6px var(--s3);
-  font-size:8.5px; letter-spacing:.26em; text-transform:uppercase; color:var(--ink-3);
+  font-size:10px; letter-spacing:.26em; text-transform:uppercase; color:var(--ink-3);
   border-bottom:1px solid var(--rule); }
 .g-sec .grow{ margin-left:auto; display:flex; gap:var(--s1); }
 .g-list{ list-style:none; margin:0; padding:0; }
@@ -393,7 +405,7 @@ body.novfx .crt{ display:none; }
   letter-spacing:.18em; text-transform:uppercase; color:var(--bg);
   background:var(--p); display:flex; gap:10px; align-items:baseline; }
 .vb-stage > h3 .mdl{ opacity:.75; }
-.vb-stage > h3 .ld{ margin-left:auto; font-size:9px; }
+.vb-stage > h3 .ld{ margin-left:auto; font-size:10px; }
 .vb-sec{ padding:10px 12px; border-top:1px solid var(--rule); white-space:pre-wrap;
   word-break:break-word; }
 .vb-think{ color:var(--ink-3); font-style:italic; max-height:40vh; overflow-y:auto; }
@@ -417,19 +429,19 @@ h4.md-h, h5.md-h, h6.md-h{ font-size:12px; color:var(--ink-2); }
   color:var(--ink-2); }
 .md-hr{ border:0; border-top:1px solid var(--rule); margin:var(--s4) 0; }
 .msg .txt a{ color:var(--rag); }
-.vb-tag{ font-size:9px; letter-spacing:.2em; text-transform:uppercase;
+.vb-tag{ font-size:10px; letter-spacing:.2em; text-transform:uppercase;
   color:var(--ink-3); display:block; margin-bottom:4px; }
 .metabtn{ background:none; border:1px solid var(--rule); color:var(--ink-3);
   font:inherit; font-size:11px; padding:1px 8px; border-radius:2px; cursor:pointer; }
 .metabtn.on{ color:var(--rag); border-color:var(--rag); }
 .tnote{ font-size:10px; color:var(--ink-3); margin-top:6px; }
 .modelpick select{ background:rgba(0,0,0,.35); color:var(--p); border:1px solid var(--rule);
-  border-radius:2px; font:inherit; font-size:12px; padding:2px 4px; max-width:210px; }
+  border-radius:2px; font:inherit; font-size:12px; padding:2px 4px; max-width:280px; }
 .modelpick select:focus{ outline:none; border-color:var(--p); }
 .modelpick a{ color:var(--ink-3); }
 #agentwiz .wiz-box{ height:auto; max-height:92vh; width:min(720px,96vw); }
 .afield{ margin:0 0 var(--s4); }
-.afield label{ display:block; font-size:8.5px; letter-spacing:.26em;
+.afield label{ display:block; font-size:10px; letter-spacing:.26em;
   text-transform:uppercase; color:var(--ink-3); margin-bottom:6px; }
 .afield input, .afield select{
   width:100%; box-sizing:border-box; padding:8px 10px;
@@ -460,7 +472,7 @@ h4.md-h, h5.md-h, h6.md-h{ font-size:12px; color:var(--ink-2); }
   border-bottom:1px solid var(--rule); }
 .wiz-head h2{ margin:0; font-size:15px; letter-spacing:.3em; text-transform:uppercase;
   color:var(--p-core); text-shadow:var(--glow-s); font-weight:700; }
-.wiz-head .sub{ font-size:9.5px; color:var(--ink-3); letter-spacing:.16em; text-transform:uppercase; }
+.wiz-head .sub{ font-size:10.5px; color:var(--ink-3); letter-spacing:.16em; text-transform:uppercase; }
 .wiz-x{ margin-left:auto; background:none; border:1px solid var(--rule); color:var(--ink-3);
   cursor:pointer; font-family:var(--mono); font-size:14px; width:28px; height:28px; }
 .wiz-x:hover{ color:var(--fault); border-color:var(--fault); }
@@ -490,6 +502,14 @@ h4.md-h, h5.md-h, h6.md-h{ font-size:12px; color:var(--ink-2); }
 @media (max-width:760px){
   .console{ grid-template-columns:minmax(0,1fr); } .rail-l{ display:none; }
   .masthead{ padding:var(--s3); flex-wrap:wrap; } .mast-meta{ display:none; }
+  /* The status bar never wrapped, so on a phone it set the page's width and pushed the
+     whole console off the right edge. */
+  .statusbar{ flex-wrap:wrap; row-gap:4px; padding:6px var(--s3); }
+  .statusbar .right{ margin-left:0; flex-wrap:wrap; }
+  .statusbar .sep{ display:none; }
+  .g-ctl{ margin-left:0; width:100%; }
+  .g-set{ flex:1 1 100%; } .g-set select{ flex:1; min-width:0; }
+  .g-add .line{ flex-wrap:wrap; } .g-add label{ min-width:0; }
 }
 @media (prefers-reduced-motion:reduce){
   *,*::before,*::after{ animation:none !important; transition:none !important; }
@@ -520,7 +540,7 @@ h4.md-h, h5.md-h, h6.md-h{ font-size:12px; color:var(--ink-2); }
     <div class="mast-meta">
       <div class="meta modelpick">
         <select id="m-pick" aria-label="Model for this run"><option value="">loading…</option></select>
-        <span>chat model · <a href="#" id="m-reset">per-persona</a></span>
+        <span>model for runs · <a href="#" id="m-reset">reset</a></span>
       </div>
       <div class="meta">
         <b><button id="rag-toggle" class="metabtn on" aria-pressed="true">on</button></b>
@@ -542,16 +562,18 @@ h4.md-h, h5.md-h, h6.md-h{ font-size:12px; color:var(--ink-2); }
               <span id="g-chev">▾</span><span>pipeline · <b id="g-sum">loading…</b></span>
             </button>
             <div class="g-ctl">
-              <div class="modes" role="group" aria-label="Planning">
-                <button class="mode" data-gplan="1" aria-pressed="true">plan first</button>
-                <button class="mode" data-gplan="0" aria-pressed="false">straight through</button>
-              </div>
-              <div class="modes" role="group" aria-label="When a goal fails">
-                <span class="g-k">on fail</span>
-                <button class="mode" data-gfail="stop" aria-pressed="true">stop</button>
-                <button class="mode" data-gfail="skip" aria-pressed="false">skip</button>
-                <button class="mode" data-gfail="ask" aria-pressed="false">ask</button>
-              </div>
+              <label class="g-set"><span class="g-k">planning</span>
+                <select id="g-plan">
+                  <option value="1">lead plans first</option>
+                  <option value="0">straight through</option>
+                </select></label>
+              <label class="g-set"><span class="g-k">if a goal fails</span>
+                <select id="g-fail">
+                  <option value="stop">stop the queue</option>
+                  <option value="skip">skip to the next</option>
+                  <option value="ask">pause and ask me</option>
+                </select></label>
+              <button class="mode" id="g-addopen" aria-expanded="true" aria-controls="g-add">+ goal</button>
               <button class="mode g-go" id="g-run">run</button>
             </div>
           </div>
@@ -571,13 +593,15 @@ h4.md-h, h5.md-h, h6.md-h{ font-size:12px; color:var(--ink-2); }
               </div>
               <div class="line">
                 <button type="button" class="mode" id="g-agents" aria-expanded="false"
-                        aria-controls="g-pick">agents · auto ▾</button>
+                        aria-controls="g-pick">goal agents · auto ▾</button>
                 <button type="button" class="mode" id="g-auto" hidden>back to auto</button>
                 <button type="submit" class="mode g-go" id="g-addbtn" style="margin-left:auto">add to pipeline</button>
               </div>
               <div class="g-pick" id="g-pick" hidden></div>
             </form>
-            <div class="g-sec">up next · <span id="g-qn">0</span></div>
+            <div class="g-sec">up next · <span id="g-qn">0</span>
+              <span class="grow"><button type="button" class="mode" id="g-qmore" hidden
+                aria-controls="g-queue">show all</button></span></div>
             <ol class="g-list" id="g-queue" aria-label="Goals waiting"></ol>
             <div class="g-sec">
               <button type="button" class="mode" id="g-finbtn" aria-expanded="true"
@@ -589,7 +613,8 @@ h4.md-h, h5.md-h, h6.md-h{ font-size:12px; color:var(--ink-2); }
         </section>
         <div class="pipelinerow">
           <div class="agentpick">
-            <button class="mode" id="agents-btn" aria-haspopup="true" aria-expanded="false">agents ▾</button>
+            <button class="mode" id="agents-btn" aria-haspopup="true" aria-expanded="false"
+                    title="Send your next chat message to one agent">ask one agent ▾</button>
             <div class="agentmenu" id="agentmenu" role="menu" hidden></div>
           </div>
           <button class="mode" id="vb-open" style="margin-left:auto">activity</button>
@@ -636,7 +661,7 @@ h4.md-h, h5.md-h, h6.md-h{ font-size:12px; color:var(--ink-2); }
                aria-label="Token throughput, last 40 samples"></svg>
         </div>
         <div class="tsec">
-          <div class="tlabel">models loaded</div>
+          <div class="tlabel">model in memory</div>
           <div id="models"></div>
         </div>
         <div class="tsec">
@@ -672,7 +697,7 @@ h4.md-h, h5.md-h, h6.md-h{ font-size:12px; color:var(--ink-2); }
     <span>rag <span class="rg" id="st-rag">on</span></span><span class="sep">│</span>
     <span>web_search <span class="ok">live</span></span>
     <span class="right">
-      <span>run_shell <span class="er">unsandboxed</span></span>
+      <span title="Chat and pipeline runs use your real shell. Agent mode and goals run in a sandboxed container.">run_shell <span class="er">unsandboxed</span></span>
       <span class="sep">│</span>
       <button id="vfx" aria-pressed="true">crt <span class="ok">on</span></button>
       <span class="sep">│</span><span id="st-state">idle</span>
@@ -797,10 +822,8 @@ const AGENTS = [
   {n:"dev_research_agent", r:"Technical research: docs, repos, library APIs.",         m:"qwen3.5:4b",     t:3},
 ];
 const TOOLS  = ["read_file","write_file","list_dir","run_shell","system_info","remember","recall"];
-const CHUNKS = [
-  {s:"VECTORS_AND_SEARCH", d:.69}, {s:"VECTORS_AND_SEARCH", d:.61},
-  {s:"RAG_SETUP", d:.48}, {s:"VECTORS_AND_SEARCH", d:.41}, {s:"RAG_SETUP", d:.33},
-];
+// Filled from real search_knowledge_base results (see simsFrom); empty until one runs.
+let CHUNKS = [];
 
 /* ══ state ══════════════════════════════════════════════════════════════ */
 const S = {
@@ -952,6 +975,9 @@ function vbEvent(e){
   else if(e.type === "trimmed")   VB.note("context trimmed", `${e.dropped_chars} chars dropped to fit ${e.model} (${e.window})`);
   else if(e.type === "no_tools")    VB.note("no tools", e.message);
   else if(e.type === "nudge")       VB.note("sent back", `${e.name}: ${e.reason}`);
+  else if(e.type === "shared_model") VB.note("model", `sharing ${e.model} with the running goal`);
+  else if(e.type === "check")       VB.note("done-when", e.verdict + (e.reason ? ` · ${e.reason}` : ""));
+  else if(e.type === "final_answer_nudge") VB.note("out of turns", `${e.max_iters} tool turns used; asked for an answer without tools`);
   else if(e.type === "turn_error")  VB.note("turn error", e.message + " — retrying");
   else if(e.type === "cycle_error") VB.note("cycle error", e.message + " — continuing");
   else if(e.type === "error")     VB.note("error", e.message);
@@ -993,7 +1019,7 @@ function fillModels(state){
   const sel = $("#m-pick");
   sel.innerHTML = "";
   const per = el("option");
-  per.value = ""; per.textContent = state.chat_model + "  (per-persona)";
+  per.value = ""; per.textContent = `each agent's own · ${state.chat_model}`;
   sel.appendChild(per);
 
   const models = (state.ollama && state.ollama.models) || [];
@@ -1177,11 +1203,14 @@ const agentClose = () => $("#agentwiz").classList.remove("on");
    the CLI shares); this greys out every control that could start one, so the page
    never offers what the server will refuse. `name` is set when the run is someone
    else's (another tab, `lag agent start`), so "stop agent" stops the right one. */
+const GOAL_RUN = "goal pipeline";   // goals.RUN_NAME: the queue holding the run lock
 function agentRunning(on, name){
   AW.running = on;
   if(on && name) AW.name = name;
-  $("#agent-stop").hidden = !on;
-  $("#agent-open").textContent = on ? `agent running: ${AW.name}…` : "agent mode";
+  const goals = on && AW.name === GOAL_RUN;
+  $("#agent-stop").hidden = !on || goals;
+  $("#agent-open").textContent = !on ? "agent mode" : goals ? "agent mode" : `agent running: ${AW.name}…`;
+  $("#agent-open").title = goals ? "Agent mode waits while the goal queue is working" : "";
   $("#agent-open").disabled = on;
   $("#aw-start").disabled = on;
   $$('#aw-saved button[data-act="run"]').forEach(b => { b.disabled = on; });
@@ -1355,6 +1384,7 @@ $("#agentwiz").addEventListener("keydown", e => {
 fetch("/api/agent/running").then(r => r.json()).then(d => {
   if(d && d.running){
     watchOther(d.running);
+    if(d.running === GOAL_RUN) return;   // the goal panel already says so
     say("agent","msg-ai").textContent =
       `Agent ${d.running} is already running — one agent at a time, so starting is ` +
       `paused until it ends. "stop agent" stops it.`;
@@ -1427,21 +1457,40 @@ function clearTarget(){
    which one is actually RESIDENT: only one chat model is held at a time, so "loaded"
    is a single row, not a list. */
 const mBox = $("#models");
+let MODELS_OPEN = false;
 function renderModels(st){
   mBox.innerHTML = "";
   const models = (st.ollama && st.ollama.models) || [];
   const loaded = new Map(((st.ollama && st.ollama.loaded) || []).map(m => [m.name, m.size_gb]));
-  models.filter(m => !m.embedding).forEach(m => {
+  const row = m => {
     const gb = loaded.get(m.name);
     const resident = gb !== undefined;
     const caps = [m.tools ? "tools" : "no tools", m.thinking ? "reasoning" : null]
       .filter(Boolean).join(" · ");
-    mBox.appendChild(el("div", null,
+    return el("div", null,
       `<div class="row"><span class="pip ${resident ? "up" : "idle"}" data-m="${esc(m.name)}"></span>
-         <span class="nm">${esc(m.name)}</span>
+         <span class="nm" title="${esc(m.name)}">${esc(m.name)}</span>
          <span class="vl">${resident ? gb.toFixed(2) + " GB" : caps}</span></div>
-       <div class="meter" data-mm="${esc(m.name)}"><i style="width:${resident ? 100 : 0}%"></i></div>`));
-  });
+       <div class="meter" data-mm="${esc(m.name)}"><i style="width:${resident ? 100 : 0}%"></i></div>`);
+  };
+  // Only one chat model fits in memory at a time, so that one is the headline. The
+  // rest of `ollama list` is a click away rather than a dozen rows of sidebar.
+  const chat = models.filter(m => !m.embedding);
+  const inMem = chat.filter(m => loaded.has(m.name)), rest = chat.filter(m => !loaded.has(m.name));
+  if(!inMem.length) mBox.appendChild(el("div", "tnote", "none yet — the next run loads one"));
+  inMem.forEach(m => mBox.appendChild(row(m)));
+  if(rest.length){
+    const tog = el("button", "mlist-tog");
+    tog.type = "button";
+    tog.setAttribute("aria-expanded", String(MODELS_OPEN));
+    tog.textContent = `${rest.length} more installed ${MODELS_OPEN ? "▴" : "▾"}`;
+    tog.addEventListener("click", () => { MODELS_OPEN = !MODELS_OPEN; renderModels(LAST_STATE || st); });
+    mBox.appendChild(tog);
+    const box = el("div", "mlist");
+    box.hidden = !MODELS_OPEN;
+    rest.forEach(m => box.appendChild(row(m)));
+    mBox.appendChild(box);
+  }
   const emb = models.filter(m => m.embedding).map(m => m.name);
   if(emb.length) mBox.appendChild(el("div","tnote", `embedder: ${esc(emb.join(", "))}`));
 }
@@ -1456,6 +1505,10 @@ tBox.appendChild(el("div","row",
 const sBox = $("#sims");
 function renderSims(active){
   sBox.innerHTML = "";
+  if(!CHUNKS.length){
+    sBox.appendChild(el("div", "tnote", "nothing yet — shows what search_knowledge_base finds"));
+    return;
+  }
   CHUNKS.forEach(c => {
     const col = c.d>.6?"var(--rag)":c.d>.45?"#8E6BD6":c.d>.35?"#5F4791":"var(--rag-deep)";
     sBox.appendChild(el("div","simrow",
@@ -1464,6 +1517,19 @@ function renderSims(active){
   });
 }
 renderSims(false);
+
+/* Parse a search_knowledge_base result ("## Result 1 (source: x · remembered, similarity:
+   0.69)") into the panel's rows. A new turn or goal clears it (resetSims). */
+function simsFrom(text){
+  const re = /## Result \d+ \(source: ([^,)]+?)(?: · remembered)?, similarity: (-?[\d.]+)\)/g;
+  const found = [];
+  let m;
+  while((m = re.exec(String(text || "")))) found.push({s: m[1].trim(), d: Math.max(0, +m[2])});
+  if(!found.length) return;
+  CHUNKS = found.slice(0, 6);
+  renderSims(true);
+}
+function resetSims(){ CHUNKS = []; renderSims(false); }
 
 const SPK = $("#spark");
 let series = Array.from({length:40}, () => 0);
@@ -1541,6 +1607,7 @@ function wireEvent(e){
     wireFrame("out", e.pretty || (e.name + "()"), rag);
   } else if(e.type === "tool_result"){
     const body = String(e.content || "");
+    if(rag) simsFrom(body);
     const lines = body ? body.split("\n").length : 0;
     wireFrame("in", `${e.name} → ${lines} line${lines === 1 ? "" : "s"}`
       + (body ? ` · ${body.slice(0, 70).replace(/\s+/g, " ")}` : ""), rag);
@@ -1656,6 +1723,17 @@ function chatStream(o){
     } else if(e.type === "nudge"){
       say("lag · pipeline","msg-ai").textContent =
         `${e.reason}, and nobody is there to answer — sending ${e.name} back to choose and finish.`;
+    } else if(e.type === "shared_model"){
+      const b = say("lag","msg-ai"); b.style.color = "var(--ink-2)";
+      b.textContent = `A goal is running on ${e.model}, so this answer uses it too — `
+        + "another model would push it out of memory.";
+    } else if(e.type === "check"){
+      if(e.verdict === "not met")
+        say("lag · pipeline","msg-ai").textContent =
+          `Checked against "done when": not met — ${e.reason}. Sending it back to fix that.`;
+      else if(e.verdict === "met") th.set("done-when checked: met", true);
+    } else if(e.type === "final_answer_nudge"){
+      th.set(`${curStage||"agent"} · out of tool turns, writing the answer`, true);
     } else if(e.type === "no_tools"){
       const b = say("lag","msg-ai"); b.style.color = "var(--amber)"; b.textContent = e.message;
     } else if(e.type === "tool"){
@@ -1791,7 +1869,7 @@ async function execute(){
   S.running = true;
   $("#exec").disabled = true;
   $("#st-state").innerHTML = '<span style="color:var(--p)">running</span>';
-  clearEmpty(); resetUnits(); renderSims(false);
+  clearEmpty(); resetUnits(); resetSims();
   $("#input").value = "";
 
   // A picked agent routes to a single-stage run addressed to just that persona;
@@ -1823,7 +1901,8 @@ $("#input").addEventListener("blur",  () => $("#promptwrap").classList.remove("f
    renders whatever snapshot arrives last, from an edit's reply or from the event
    stream. A goal's live work streams into the chat pane, like a chat turn; live
    events never rebuild the card, so a button is not rebuilt under the pointer. */
-const GP = { snap:null, picked:[], pickOpen:false, finOpen:true, fold:false, flash:null };
+const GP = { snap:null, picked:[], pickOpen:false, finOpen:false, fold:false, flash:null,
+             addOpen:null, qAll:false };   // null = automatic: open when nothing is running
 try { GP.fold = localStorage.getItem("lag.goals.fold") === "1"; } catch(_){}
 
 const FINISHED_G = ["done","failed","skipped"];
@@ -1870,10 +1949,8 @@ function gRender(){
   $("#g-sum").textContent =
     `${pend.length + (cur ? 1 : 0)} left · ${fin.filter(g => g.status === "done").length} done · ${state}`;
 
-  $$("[data-gplan]").forEach(b => b.setAttribute("aria-pressed",
-    String((b.dataset.gplan === "1") === !!d.settings.plan)));
-  $$("[data-gfail]").forEach(b => b.setAttribute("aria-pressed",
-    String(b.dataset.gfail === d.settings.fail)));
+  $("#g-plan").value = d.settings.plan ? "1" : "0";
+  $("#g-fail").value = d.settings.fail || "stop";
   const run = $("#g-run");
   run.textContent = d.pausing ? "pausing…" : d.running ? "pause" : "run";
   run.disabled = !!d.pausing;
@@ -1882,7 +1959,13 @@ function gRender(){
   gRenderNote();
 
   $("#g-qn").textContent = pend.length;
-  $("#g-queue").innerHTML = pend.length ? pend.map((g,i) => `
+  const QSHOW = 3, more = pend.length - QSHOW;
+  const qmore = $("#g-qmore");
+  qmore.hidden = more <= 0;
+  qmore.textContent = GP.qAll ? "show fewer ▴" : `show all ${pend.length} ▾`;
+  qmore.setAttribute("aria-expanded", String(GP.qAll));
+  const shown = GP.qAll ? pend : pend.slice(0, QSHOW);
+  $("#g-queue").innerHTML = pend.length ? shown.map((g,i) => `
     <li><span class="num">${i+1}</span>
       <div class="main">
         <div class="row">${i === 0 ? '<span class="g-pill" data-s="next">next</span>' : ""}
@@ -1909,13 +1992,20 @@ function gRender(){
     <li><span class="g-pill" data-s="${esc(g.status)}">${esc(g.status)}</span>
       <div class="main"><span class="gt">${esc(g.text)}</span>
         ${g.route.length ? `<span class="sub ran">ran · ${esc(g.route.join(" → "))}</span>` : ""}
-        ${g.error ? `<span class="sub err">${esc(g.error)}</span>` : ""}</div>
+        ${g.error ? `<span class="sub err">${esc(g.error)}</span>` : ""}
+        ${g.check === "met" ? `<span class="sub ran">done when · checked, met</span>` : ""}</div>
       <div class="acts">
         ${g.answer ? `<button class="mode" data-gact="view" data-id="${esc(g.id)}">view</button>` : ""}
         ${g.status !== "done" ? `<button class="mode" data-gact="retry" data-id="${esc(g.id)}">retry</button>` : ""}
         <button class="mode g-ico" data-gact="remove" data-id="${esc(g.id)}" aria-label="Remove from finished">✕</button>
       </div></li>`).join("");
 
+  // The form shows by itself only when nothing is running; "+ goal" opens it on demand.
+  const addOpen = GP.addOpen === null ? !cur : GP.addOpen;
+  $("#g-add").hidden = !addOpen;
+  const ao = $("#g-addopen");
+  ao.setAttribute("aria-expanded", String(addOpen));
+  ao.textContent = addOpen ? "− goal" : "+ goal";
   $("#g-body").hidden = GP.fold;
   $("#g-chev").textContent = GP.fold ? "▸" : "▾";
   $("#g-fold").setAttribute("aria-expanded", String(!GP.fold));
@@ -1959,9 +2049,10 @@ function gRenderNote(){
   let msg = GP.flash;
   if(!msg && d){
     const pend = (d.goals || []).some(g => g.status === "pending");
-    msg = d.note || (d.current || d.awaiting ? ""
+    const note = /^paused\.?$/i.test(d.note || "") ? "" : d.note;
+    msg = note || (d.current || d.awaiting ? ""
       : d.running ? "idle — add a goal and it starts on its own"
-      : pend ? "paused — press run to start the queue" : "");
+      : pend ? "press run to start the queue" : "");
   }
   n.hidden = !msg; n.textContent = msg || "";
   n.classList.toggle("err", !!GP.flash);
@@ -1971,7 +2062,7 @@ function gRenderPick(){
   const p = $("#g-pick"), btn = $("#g-agents");
   p.hidden = !GP.pickOpen;
   btn.setAttribute("aria-expanded", String(GP.pickOpen));
-  btn.textContent = `agents · ${GP.picked.length ? GP.picked.length + " picked" : "auto"} ▾`;
+  btn.textContent = `goal agents · ${GP.picked.length ? GP.picked.length + " picked" : "auto"} ▾`;
   $("#g-auto").hidden = !GP.picked.length;
   p.innerHTML = `<span class="hint">Pick the agents for this goal, in run order. None picked means the orchestrator chooses.</span>` +
     AGENTS.map(a => {
@@ -1987,7 +2078,7 @@ function gRenderPick(){
    while chat is idle. */
 const GS = { id:null, s:null };
 function gStreamOpen(g){
-  clearEmpty();
+  clearEmpty(); resetSims();
   const who = g.agents.length ? `goal → ${g.agents.join(" → ")}` : "goal";
   const t = say(esc(who), "msg-user");
   t.textContent = g.text;
@@ -2006,6 +2097,7 @@ function gStreamClose(){
   const g = gById(id);
   const end = !g ? "removed from the queue"
     : g.status === "done"    ? (r.answered ? "goal done" : "goal done · (empty answer)")
+                               + (g.check === "met" ? " · done-when checked: met" : "")
     : g.status === "failed"  ? "goal failed" + (g.error ? " · " + g.error : "")
     : g.status === "skipped" ? "goal skipped"
     : "goal stopped — it is back in the queue";
@@ -2035,10 +2127,10 @@ $("#g-fold").addEventListener("click", () => {
   try { localStorage.setItem("lag.goals.fold", GP.fold ? "1" : "0"); } catch(_){}
   gRender();
 });
-$$("[data-gplan]").forEach(b => b.addEventListener("click", () =>
-  gApi("/api/goals/settings", "POST", {plan: b.dataset.gplan === "1"})));
-$$("[data-gfail]").forEach(b => b.addEventListener("click", () =>
-  gApi("/api/goals/settings", "POST", {fail: b.dataset.gfail})));
+$("#g-plan").addEventListener("change", e =>
+  gApi("/api/goals/settings", "POST", {plan: e.target.value === "1"}));
+$("#g-fail").addEventListener("change", e =>
+  gApi("/api/goals/settings", "POST", {fail: e.target.value}));
 $("#g-run").addEventListener("click", async () => {
   if(GP.snap && GP.snap.running) return gApi("/api/goals/pause");
   // The masthead model picker applies here as it does to chat: one model for every
@@ -2067,6 +2159,15 @@ $("#g-pick").addEventListener("click", e => {
   gRenderPick();
 });
 $("#g-finbtn").addEventListener("click", () => { GP.finOpen = !GP.finOpen; gRender(); });
+$("#g-qmore").addEventListener("click", () => { GP.qAll = !GP.qAll; gRender(); });
+$("#g-addopen").addEventListener("click", () => {
+  const cur = GP.snap && GP.snap.current;
+  const open = GP.addOpen === null ? !cur : GP.addOpen;
+  GP.addOpen = !open;
+  if(GP.addOpen && GP.fold){ GP.fold = false; }
+  gRender();
+  if(GP.addOpen) $("#g-text").focus();
+});
 $("#g-clear").addEventListener("click", () => gApi("/api/goals/clear"));
 $("#goals").addEventListener("click", e => {
   const b = e.target.closest("[data-gact]"); if(!b || b.disabled) return;

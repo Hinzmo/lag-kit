@@ -15,7 +15,8 @@ server. Unattended work runs in a locked-down container with a filtering egress 
   orchestrator reads each goal, picks which specialist agents should handle it, briefs
   them, and works through the queue one goal at a time. It runs on the server, so it keeps
   going with the browser closed. Agents decide rather than stall: an answer that ends on
-  a question is sent back to choose and finish.
+  a question is sent back to choose and finish. A goal only counts as done once its answer
+  is checked against "done when". `lag goals` drives the same queue from the terminal.
 - **Live console** (`lag serve`). Streams every stage's thinking, tool calls and answer
   as they happen. A separate activity window keeps the raw trace.
 - **Pipelines** (`lag pipeline`). Staged agents, each seeing the work above it. The
@@ -133,6 +134,7 @@ lag run "what is this project?"           # one agent, local tools
 lag run "same thing" --mcp                # same tools, over the MCP boundary
 lag pipeline "design a url shortener"     # staged agents
 lag serve                                 # web console and goal queue
+lag goals add "…" --done-when "…"         # then: ls | run | watch | show | pause | skip | rm
 lag agent new                             # then: list | start | status | stop
 lag study add <course> <path>             # then: ask | quiz | cards | review
 ```
@@ -181,7 +183,7 @@ Pick models that support tools (`lag models` shows which do).
 
 ## Tests
 
-491 tests: the loop, the MCP bridge, the sandbox and egress proxy (with real containers
+518 tests: the loop, the MCP bridge, the sandbox and egress proxy (with real containers
 when Docker is running), the goal queue, and the console. The console is checked in jsdom.
 
 ```bash

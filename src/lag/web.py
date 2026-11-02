@@ -26,6 +26,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import os
 import queue
 import threading
 from pathlib import Path
@@ -49,8 +50,29 @@ _UI = _ROOT / "ui" / "console.html"
 _provider_cache: dict = {}
 
 
+def _warm() -> None:
+    """Load the chat model into Ollama in the background, so the first message does
+    not pay the cold load (5-7 s). It generates one token rather than sending an empty
+    prompt: on Apple Silicon the first real generation after a load also sets up the
+    GPU kernels, which made the first chat slow even with the model loaded. Same
+    num_ctx the chat will use, since a different window would load it again. Never
+    raises; LAG_WARM=0 turns it off."""
+    with contextlib.suppress(Exception):
+        cfg = load_config()
+        model = (cfg.get("models") or {}).get("worker")
+        if not model:
+            return
+        o = cfg.get("ollama", {}) or {}
+        num_ctx = (o.get("num_ctx_by_model") or {}).get(model, o.get("num_ctx", 4096))
+        ollama.Client(host=cfg.get("ollama_base_url", "http://127.0.0.1:11434")).generate(
+            model=model, prompt="ok", keep_alive=o.get("keep_alive") or "30m",
+            options={"num_ctx": num_ctx, "num_predict": 1})
+
+
 @contextlib.asynccontextmanager
 async def _lifespan(_app):
+    if os.environ.get("LAG_WARM", "1") != "0":
+        threading.Thread(target=_warm, daemon=True, name="lag-warm").start()
     yield
     # Shutdown: this process built these providers, so it closes them. A build that
     # FAILED leaves nothing here to close — from_config cleans up after itself, which
@@ -374,7 +396,16 @@ def stream(req: RunRequest):
     the same contract /api/run has and the same spirit as the tool layer.
     """
     cfg = load_config()
+    # One chat model fits in memory at a time. A chat on a different model while a goal
+    # runs would evict the goal's model, and the two would swap back and forth at a
+    # cold load each. So while a goal runs, chat uses the model it is on.
+    runner = _goal_runner_cache.get("runner")
+    shared = runner.model if runner is not None and runner.current else ""
+
     def work(emit) -> None:
+        if shared:
+            req.model = shared
+            emit({"type": "shared_model", "model": shared})
         provider = _provider(cfg, req.mcp)
         if not req.retrieval:
             provider = _without_retrieval(provider)

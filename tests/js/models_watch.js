@@ -68,6 +68,31 @@ setTimeout(() => {
     if (!panelText().includes("9.10 GB")) problems.push("the resident model was not shown as loaded");
     if (pick.value !== "qwen3:8b") problems.push(`the picked override was lost on a push (now ${JSON.stringify(pick.value)})`);
 
+    // Only the model in memory is listed openly; the rest of `ollama list` folds away.
+    const fold = doc.querySelector("#models .mlist");
+    if (!fold || !fold.hidden) problems.push("installed-but-unloaded models are not folded away");
+    else if (!fold.textContent.includes("qwen3:8b")) problems.push("the folded list lost a model");
+    const tog = doc.querySelector("#models .mlist-tog");
+    if (!tog || !tog.textContent.includes("1 more installed")) problems.push(`fold toggle says ${tog && tog.textContent}`);
+    else { tog.click(); if (doc.querySelector("#models .mlist").hidden) problems.push("the fold toggle did not open the list"); }
+
+    // The retrieval panel starts empty (it once shipped mockup rows) and fills from a
+    // real search_knowledge_base result.
+    const sims = () => doc.querySelector("#sims").textContent;
+    if (/VECTORS_AND_SEARCH|RAG_SETUP/.test(sims())) problems.push("the retrieval panel still shows mockup rows");
+    if (!sims().includes("nothing yet")) problems.push("the empty retrieval panel does not say so");
+    const goalsES = sources.find(x => x.url.includes("/api/goals/events"));
+    const g1 = { id: "g1", text: "t", status: "running", done_when: "", agents: [], route: [],
+                 answer: "", error: "", added: "", started: "", finished: "", check: "" };
+    goalsES.onmessage({ data: JSON.stringify({ type: "goals", running: true, pausing: false,
+      current: "g1", stage: "", awaiting: null, note: "",
+      settings: { plan: true, fail: "stop", model: "" }, goals: [g1] }) });
+    goalsES.onmessage({ data: JSON.stringify({ type: "tool_result", name: "search_knowledge_base", goal: "g1",
+      content: "Found 2 relevant chunks:\n\n## Result 1 (source: egress.md, similarity: 0.71)\ntext\n\n"
+             + "## Result 2 (source: deploy key · remembered, similarity: 0.42)\nmore\n" }) });
+    if (!sims().includes("egress.md") || !sims().includes("0.71") || !sims().includes("deploy key"))
+      problems.push(`real results not shown: ${JSON.stringify(sims())}`);
+
     // An rm: the model disappears again.
     push(OLLAMA);
     if (options().includes("fresh:14b")) problems.push("a removed model stayed in the picker");

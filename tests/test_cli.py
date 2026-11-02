@@ -108,3 +108,10 @@ def test_naming_agents_explicitly_skips_the_router(monkeypatch):
     assert runner.invoke(app, ["pipeline", "x", "--agents", "tester_agent"]).exit_code == 0
     assert captured["routed"] is False
     assert captured["names"] == ["tester_agent"]
+
+
+def test_pipeline_refuses_an_empty_agents_list(monkeypatch):
+    captured = _fake_pipeline(monkeypatch)
+    r = runner.invoke(app, ["pipeline", "task", "--agents", " , "])
+    assert r.exit_code == 1 and "names no agents" in r.output
+    assert captured == {}

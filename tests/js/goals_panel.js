@@ -104,6 +104,14 @@ const last = () => calls[calls.length - 1] || [];
   check(q[0].textContent.includes("<img"), "escaped goal text is missing");
   check(q[1].textContent.includes("dev_agent → tester_agent"), "picked agents not shown");
 
+  // A goal is running, so the add form folds away to give the answer the room; "+ goal"
+  // brings it back. Finished goals start folded too.
+  check($("#g-add").hidden, "the add form stays open while a goal runs");
+  check($("#g-fin").hidden, "the finished list starts open");
+  $("#g-addopen").click();
+  check(!$("#g-add").hidden, "+ goal did not open the add form");
+  check($("#g-plan").value === "1" && $("#g-fail").value === "stop", "settings not shown in the selects");
+
   const fin = $$("#g-fin li");
   check(fin.length === 2, `expected 2 finished, got ${fin.length}`);
   check(fin[0].textContent.includes("broke"), "finished list not newest first");
@@ -141,7 +149,8 @@ const last = () => calls[calls.length - 1] || [];
   $("#g-run").click(); await tick();
   check(last()[1] === "/api/goals/pause", "run button did not pause a running queue");
 
-  $('[data-gfail="ask"]').click(); await tick();
+  { const f = $("#g-fail"); f.value = "ask"; f.dispatchEvent(new dom.window.Event("change")); }
+  await tick();
   check(last()[1] === "/api/goals/settings" && last()[2].fail === "ask", "on-fail not sent");
 
   // add with two picked agents, in click order
