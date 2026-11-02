@@ -93,10 +93,15 @@ safely without `chromadb` or an embedder. `src/lag/rag.py` holds the retrieval c
   stage is on; while a goal runs, `/api/stream` swaps the chat onto that model and says so
   (`shared_model` event). A different model would evict the goal's and the two would swap
   at a cold load each. Chat is not blocked: same-model requests share Ollama.
-- **Still open:** the first messages after a start take 5-7 s, then about 2.6 s. The model
-  is not reloading (load 0.00 s); each message re-reads ~1,400 tokens of tool schemas, and
-  Ollama's MLX prompt cache reuses that prefix inconsistently (0.07 s on a hit, ~3 s on a
-  miss). The first chat also starts the MCP servers.
+- **Chat starts in ~0.2 s, even right after a start.** Every chat sends ~1,300 tokens of
+  tool schemas ahead of the question; reading them costs 2.7 s on gemma4:e4b and 10 s on
+  qwen3.5:9b. Ollama's cache only reuses that shared start after it has seen two prompts
+  that part ways right where the question begins, so the first two different chats after
+  a load used to pay in full. `_warm()` now sends two one-token chats with the real MCP
+  tool list ("a", then "b") at startup, which also starts the MCP servers. Measured from
+  a cold load: the first real chat dropped from 4.9 s to 0.25 s, and chat stays cached
+  while goal agents with their own system prompts run in between. What is left of a
+  chat's wait is the model thinking before it answers (48-265 thinking tokens on gemma).
 
 ### Live model list
 

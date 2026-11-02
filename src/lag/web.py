@@ -51,22 +51,34 @@ _provider_cache: dict = {}
 
 
 def _warm() -> None:
-    """Load the chat model into Ollama in the background, so the first message does
-    not pay the cold load (5-7 s). It generates one token rather than sending an empty
-    prompt: on Apple Silicon the first real generation after a load also sets up the
-    GPU kernels, which made the first chat slow even with the model loaded. Same
-    num_ctx the chat will use, since a different window would load it again. Never
-    raises; LAG_WARM=0 turns it off."""
+    """Get the chat model ready before the first message: loaded, and with the tool
+    list already in its prompt cache. Never raises; LAG_WARM=0 turns it off.
+
+    Loading alone was not enough. A chat sends about 1,300 tokens of tool schemas
+    ahead of the question, and reading them takes 2.7 s on gemma4:e4b and 10 s on
+    qwen3.5:9b. Ollama's cache only reuses that shared start once it has seen two
+    prompts that part ways right where the question begins, so it sends two chats
+    with the real tool list whose questions differ from their first character.
+    Measured from a cold load: the first real chat dropped from 4.9 s to 0.25 s on
+    gemma4:e4b, and later chats stay cached even after goal agents run in between.
+    It uses the same num_ctx as chat, since a different window would load the model
+    again, and the MCP tool list, which is what the console sends by default.
+    """
     with contextlib.suppress(Exception):
         cfg = load_config()
         model = (cfg.get("models") or {}).get("worker")
         if not model:
             return
-        o = cfg.get("ollama", {}) or {}
-        num_ctx = (o.get("num_ctx_by_model") or {}).get(model, o.get("num_ctx", 4096))
-        ollama.Client(host=cfg.get("ollama_base_url", "http://127.0.0.1:11434")).generate(
-            model=model, prompt="ok", keep_alive=o.get("keep_alive") or "30m",
-            options={"num_ctx": num_ctx, "num_predict": 1})
+        tools = None
+        with contextlib.suppress(Exception):
+            tools = _provider(cfg, True).schemas()
+        # Built the way a chat builds its client, so the window, keep_alive and think
+        # setting match what the chat will send; only the answer length differs.
+        client = OllamaClient.from_config(cfg, model)
+        client.num_predict = 1
+        for question in ("a", "b"):
+            client._chat(model=model, messages=[{"role": "user", "content": question}],
+                         tools=tools if client.has_tools else None)
 
 
 @contextlib.asynccontextmanager

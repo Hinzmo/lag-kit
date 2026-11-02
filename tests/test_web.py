@@ -287,20 +287,28 @@ def test_model_signature_includes_digests_and_residents(monkeypatch):
 
 # ── one model in memory: warm-up and sharing ─────────────────────────────────
 
-def test_warm_loads_the_chat_model_with_the_chat_window(monkeypatch):
+def test_warm_caches_the_tool_list_with_two_chats_that_part_at_the_question(monkeypatch):
     from lag import web
+    from lag import ollama_client
     calls = []
 
     class C:
         def __init__(self, host=None): pass
-        def generate(self, **kw): calls.append(kw)
+        def show(self, model): return type("S", (), {"capabilities": ["completion", "tools"]})()
+        def chat(self, **kw): calls.append(kw)
     monkeypatch.setattr(web.ollama, "Client", C)
+    monkeypatch.setattr(ollama_client, "_CAPS", {})
+    tools = [{"type": "function", "function": {"name": "read_file"}}]
+    monkeypatch.setattr(web, "_provider", lambda cfg, mcp: type("P", (), {"schemas": lambda self: tools})())
     monkeypatch.setattr(web, "load_config", lambda: {
         "models": {"worker": "m:1"},
         "ollama": {"num_ctx": 8192, "num_ctx_by_model": {"m:1": 16384}, "keep_alive": "30m"}})
     web._warm()
-    assert calls == [{"model": "m:1", "prompt": "ok", "keep_alive": "30m",
-                      "options": {"num_ctx": 16384, "num_predict": 1}}]
+    # Same model, window, keep_alive and tool list a chat sends; questions differ at once.
+    assert [c["messages"][0]["content"][0] for c in calls] == ["a", "b"]
+    for c in calls:
+        assert c["model"] == "m:1" and c["tools"] == tools and c["keep_alive"] == "30m"
+        assert c["options"] == {"num_ctx": 16384, "num_predict": 1}
 
 
 def test_warm_never_raises(monkeypatch):
