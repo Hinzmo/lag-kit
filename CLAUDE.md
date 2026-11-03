@@ -44,7 +44,7 @@ goes on branches and lands via PR.
 The primary box is a **MacBook Air M4, 16 GB** (since 2026-08-21). The CPU-only Ubuntu
 machine the kit was built on is secondary; its traps are in the appendix.
 
-- **Build the venv on Python 3.12.** macOS ships **3.14** as `python3`, and `chromadb` (the
+- **Build the venv on Python 3.12.** Homebrew's current `python3` is **3.14**, and `chromadb` (the
   `[rag]` extra) has no 3.14 wheels, so an install on 3.14 fails at the C-extension build:
 
   ```bash

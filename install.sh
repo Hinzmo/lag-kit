@@ -6,7 +6,7 @@
 set -e
 cd "$(dirname "$0")"
 
-# 3.12 specifically: chromadb has no wheel for 3.14 yet, which is what macOS ships.
+# 3.12 specifically: chromadb has no wheel for 3.14 yet, Homebrew's current python3.
 PY=""
 for c in python3.12 /opt/homebrew/bin/python3.12 /usr/local/bin/python3.12; do
   if command -v "$c" >/dev/null 2>&1; then PY="$c"; break; fi
