@@ -34,10 +34,10 @@ The interesting parts of this project are the constraints it was built around, m
 them measured on the target machine (a 16 GB MacBook Air M4).
 
 **One model at a time is the real limit.** It is free memory, not a setting: with macOS
-and a browser open, the 16 GB Mac has about 9 GB free, which fits one 5–6 GB chat model.
+and a browser open, the 16 GB Mac has about 9 GB free, which fits one chat model.
 Loading a second evicted the first in every trial, and Ollama's log says why: the next
 model is "predicted to exceed available memory" (`system_limited=true`), while GPU
-memory still had room. Each switch is a cold load of 6–7.5s for the 9B orchestrator and
+memory still had room. Each switch is a cold load of 6–7.5s for a 9B model and
 4–5s for `qwen3:8b`. So stages run in sequence, never in parallel (an
 earlier parallel mode made concurrent agents evict each other in a loop), goals are a
 queue rather than a pool, and routing and briefing happen in a single orchestrator call
@@ -116,13 +116,13 @@ for every role means a run loads it once and never switches.
 
 ```bash
 lag setup --model qwen3:14b               # pull it and map the agents to it
-lag setup --orchestrator gpt-oss:20b      # same for the planning role
+lag setup --orchestrator gemma4:e4b      # same for the planning role
 lag models                                # what's installed, what it supports, who uses it
 ```
 
 Re-running `lag setup` with no flags keeps your mapping and pulls anything it names that
-is missing. Use Python 3.12: macOS ships 3.14 as `python3`, and `chromadb` has no 3.14
-wheel yet. Run `lag` from the repo root, because its state folders are relative to the
+is missing. Use Python 3.12: Homebrew's current `python3` is 3.14, and `chromadb` has no
+3.14 wheel yet. Run `lag` from the repo root, because its state folders are relative to the
 working directory.
 
 ## Commands
@@ -183,10 +183,11 @@ Pick models that support tools (`lag models` shows which do).
 
 ## Tests
 
-518 tests: the loop, the MCP bridge, the sandbox and egress proxy (with real containers
+Over 500 tests: the loop, the MCP bridge, the sandbox and egress proxy (with real containers
 when Docker is running), the goal queue, and the console. The console is checked in jsdom.
 
 ```bash
+.venv/bin/pip install -e ".[dev]"     # pytest, httpx, ruff
 .venv/bin/python -m pytest
 cd tests/js && npm install                # enables the console tests
 ```

@@ -191,7 +191,7 @@ def test_a_cancel_survives_code_that_catches_exception(tmp_path):
     def stubborn(goal, settings, emit):
         started.set()
         for _ in range(500):
-            try:
+            try:  # noqa: SIM105 - spelled out: it mimics the run loop's except Exception
                 emit({"type": "token", "text": "."})
             except Exception:  # noqa: BLE001 - this is the point of the test
                 pass
