@@ -102,7 +102,7 @@ loops until the model answers.
 Needs Python 3.12. Docker Desktop is needed for agent mode and the goal queue.
 
 ```bash
-git clone https://github.com/Hinzmo/local-agent-kit.git && cd local-agent-kit
+git clone https://github.com/Hinzmo/lag-kit.git && cd lag-kit
 ./install.sh                              # venv, Ollama, models, config.yaml
 .venv/bin/lag serve                       # console at http://127.0.0.1:8765
 ```

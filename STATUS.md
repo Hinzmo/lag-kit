@@ -33,7 +33,7 @@ Since Phase 6:
 | Readable output (`render.py`) | — | ✅ |
 | SSRF guard on `http_fetch` | — | ✅ |
 
-Repo: `github.com/Hinzmo/local-agent-kit`, default branch `main`.
+Repo: `github.com/Hinzmo/lag-kit`, default branch `main`.
 
 ---
 
@@ -280,7 +280,7 @@ list live from Ollama.
 
 ## Setup and commands (Mac)
 
-1. `git clone git@github.com:Hinzmo/local-agent-kit.git && cd local-agent-kit`
+1. `git clone git@github.com:Hinzmo/lag-kit.git && cd lag-kit`
 2. `./install.sh` — builds `.venv` on **Python 3.12** (macOS 3.14 has no `chromadb` wheel;
    it offers `brew install python@3.12` if missing), installs `.[rag,web,study]`, then runs
    `lag setup`: installs Ollama if missing (asks first; brew on macOS, the official script

@@ -33,7 +33,7 @@ tests/     pytest suite, plus tests/js for the console boot check
 docs/      RAG_SETUP.md  VECTORS_AND_SEARCH.md
 ```
 
-Remote: `github.com/Hinzmo/local-agent-kit`. Default branch `main`; feature work
+Remote: `github.com/Hinzmo/lag-kit`. Default branch `main`; feature work
 goes on branches and lands via PR.
 
 > **`STATUS.md` is the living status doc** — update it when behaviour changes; this file
