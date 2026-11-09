@@ -596,8 +596,8 @@ h4.md-h, h5.md-h, h6.md-h{ font-size:12px; color:var(--ink-2); }
               </div>
               <div class="line">
                 <button type="button" class="mode" id="g-agents" aria-expanded="false"
-                        aria-controls="g-pick">goal agents · auto ▾</button>
-                <button type="button" class="mode" id="g-auto" hidden>back to auto</button>
+                        aria-controls="g-pick">goal agents · auto (recommended) ▾</button>
+                <button type="button" class="mode" id="g-auto" hidden>back to auto (recommended)</button>
                 <button type="submit" class="mode g-go" id="g-addbtn" style="margin-left:auto">add to pipeline</button>
               </div>
               <div class="g-pick" id="g-pick" hidden></div>
@@ -2065,9 +2065,9 @@ function gRenderPick(){
   const p = $("#g-pick"), btn = $("#g-agents");
   p.hidden = !GP.pickOpen;
   btn.setAttribute("aria-expanded", String(GP.pickOpen));
-  btn.textContent = `goal agents · ${GP.picked.length ? GP.picked.length + " picked" : "auto"} ▾`;
+  btn.textContent = `goal agents · ${GP.picked.length ? GP.picked.length + " picked" : "auto (recommended)"} ▾`;
   $("#g-auto").hidden = !GP.picked.length;
-  p.innerHTML = `<span class="hint">Pick the agents for this goal, in run order. None picked means the orchestrator chooses.</span>` +
+  p.innerHTML = `<span class="hint">Pick the agents for this goal, in run order. None picked means the orchestrator chooses (recommended): it reads the goal and runs only the agents it needs.</span>` +
     AGENTS.map(a => {
       const k = GP.picked.indexOf(a.n);
       return `<button type="button" class="mode" data-gpick="${esc(a.n)}" aria-pressed="${k >= 0}">${

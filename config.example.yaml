@@ -58,6 +58,14 @@ ollama:
   # memory dial, not a speed dial: measured on an M4, raising it left generation speed
   # (~19 tok/s) and load time flat — only the footprint grew. Filling the window is a
   # different matter; prefill cost tracks tokens actually used.
+  #
+  # Exception: on Apple Silicon, Ollama serves some tags as MLX builds, and it ignores
+  # num_ctx for them. Measured 2026-11-08 on gemma4:e4b (nvfp4): at num_ctx 8192 it read
+  # a 25,414-token prompt whole, with the same memory and speed from 8192 to 131072. For
+  # such a tag this setting only sizes how much earlier work the pipeline hands each
+  # stage (Pipeline._fit: num_ctx x 4 chars x 0.55), so set it to what a stage should
+  # read; 25K tokens took 60 s of prefill. To check a tag, send a prompt longer than
+  # num_ctx and compare its prompt_eval_count.
   num_ctx: 8192
 
   # Optional per-model override, keyed by tag, falling back to num_ctx above.

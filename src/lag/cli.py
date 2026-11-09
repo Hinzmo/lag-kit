@@ -49,7 +49,7 @@ def pipeline(
     task: str,
     agents: str = typer.Option(None, help="Comma-separated persona names, in order (the first plans unless --no-plan)."),
     plan: bool = typer.Option(True, help="Let the first stage write the downstream instructions before any work starts."),
-    route: bool = typer.Option(True, help="Let the orchestrator pick which agents the task needs, instead of running --agents in order."),
+    route: bool = typer.Option(True, help="Let the orchestrator pick which agents the task needs (recommended), instead of running --agents in order."),
     mcp: bool = typer.Option(False, "--mcp", help="Give every stage the MCP toolset (fs, shell, web, memory, and search_knowledge_base) instead of only in-process tools."),
 ):
     """Run a project pipeline: staged agents, each building on the context above it.

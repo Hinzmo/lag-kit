@@ -94,7 +94,7 @@ def ls():
 def add(
     text: str = typer.Argument(..., help="What should get done."),
     done_when: str = typer.Option("", "--done-when", "-d", help="How you will know it is done."),
-    agents: str = typer.Option(None, help="Comma-separated agents, in order. Omit to let the orchestrator pick."),
+    agents: str = typer.Option(None, help="Comma-separated agents, in order. Omit to let the orchestrator pick (recommended)."),
 ):
     """Add a goal to the end of the queue."""
     names: list[str] = []
