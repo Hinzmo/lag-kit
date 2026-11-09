@@ -204,6 +204,10 @@ when Docker is running), the goal queue, and the console. The console is checked
 cd tests/js && npm install                # enables the console tests
 ```
 
+Clients (the console, `lag goals`, the phone app) build on a written API contract:
+[`docs/api-contract.md`](docs/api-contract.md). `tests/test_contract.py` keeps it, the
+recorded example streams and the server in step.
+
 `STATUS.md` has the full current state, measurements and what's left.
 
 ## License

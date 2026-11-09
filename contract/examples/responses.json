@@ -1,0 +1,249 @@
+{
+  "401 GET /api/state without a key": {
+    "error": "this phone is not paired, or was revoked; pair it with `lag phone pair` on the Mac"
+  },
+  "POST /api/pair": {
+    "key": "<device key: 43 url-safe characters>",
+    "device": {
+      "name": "recorder",
+      "paired": "2026-11-09T00:10:00-0600",
+      "last_seen": "2026-11-09T00:10:00-0600",
+      "tailscale_login": ""
+    }
+  },
+  "GET /api/version": {
+    "lag": "0.2.0",
+    "contract": 1
+  },
+  "GET /api/state": {
+    "version": "0.2.0",
+    "ollama": {
+      "up": true,
+      "available": [
+        "gemma4:e4b"
+      ],
+      "loaded": [
+        {
+          "name": "gemma4:e4b",
+          "size_gb": 9.37
+        }
+      ],
+      "models": [
+        {
+          "name": "gemma4:e4b",
+          "capabilities": [
+            "audio",
+            "completion",
+            "thinking",
+            "tools",
+            "vision"
+          ],
+          "tools": true,
+          "thinking": true,
+          "embedding": false
+        }
+      ]
+    },
+    "chat_model": "gemma4:e4b",
+    "num_ctx": 32768,
+    "personas": [
+      {
+        "name": "analyst_agent",
+        "role": "Technical analysis of data, logs, and agent output.",
+        "model": "gemma4:e4b",
+        "tools": [
+          "read_file",
+          "list_dir",
+          "run_shell",
+          "remember",
+          "recall"
+        ]
+      },
+      {
+        "name": "architect_agent",
+        "role": "System design. The hardest reasoning role.",
+        "model": "gemma4:e4b",
+        "tools": [
+          "read_file",
+          "list_dir",
+          "remember",
+          "recall"
+        ]
+      },
+      {
+        "name": "biz_analyst_agent",
+        "role": "Requirements, specs, and stakeholder-facing language.",
+        "model": "gemma4:e4b",
+        "tools": [
+          "read_file",
+          "write_file",
+          "remember",
+          "recall"
+        ]
+      },
+      {
+        "name": "design_agent",
+        "role": "UI design decisions, scoped to text-describable specs (no vision).",
+        "model": "gemma4:e4b",
+        "tools": [
+          "read_file",
+          "write_file"
+        ]
+      },
+      {
+        "name": "dev_agent",
+        "role": "Implementation. Writes working code from a spec.",
+        "model": "gemma4:e4b",
+        "tools": [
+          "read_file",
+          "write_file",
+          "list_dir",
+          "run_shell"
+        ]
+      },
+      {
+        "name": "dev_research_agent",
+        "role": "Technical research scoped to docs, repos, library APIs, and stack decisions.",
+        "model": "gemma4:e4b",
+        "tools": [
+          "web_search",
+          "read_file",
+          "list_dir"
+        ]
+      },
+      {
+        "name": "research_agent",
+        "role": "General research specialist. First stop for any task needing external knowledge.",
+        "model": "gemma4:e4b",
+        "tools": [
+          "web_search",
+          "read_file",
+          "list_dir",
+          "remember",
+          "recall"
+        ]
+      },
+      {
+        "name": "senior_dev_agent",
+        "role": "Code review and quality. Reasons over correctness, edge cases, and design.",
+        "model": "gemma4:e4b",
+        "tools": [
+          "read_file",
+          "list_dir",
+          "run_shell"
+        ]
+      },
+      {
+        "name": "tester_agent",
+        "role": "Writes and runs tests against implemented code.",
+        "model": "gemma4:e4b",
+        "tools": [
+          "read_file",
+          "write_file",
+          "list_dir",
+          "run_shell"
+        ]
+      }
+    ],
+    "tools": [
+      "read_file",
+      "write_file",
+      "list_dir",
+      "run_shell",
+      "system_info",
+      "remember",
+      "recall",
+      "web_search",
+      "goal_status",
+      "note_progress",
+      "mark_done",
+      "now",
+      "sleep_for",
+      "find_files",
+      "grep_files",
+      "http_fetch"
+    ],
+    "rag_tools": [
+      "search_knowledge_base"
+    ],
+    "chroma": {
+      "available": true,
+      "chunks": 0
+    },
+    "mcp": {
+      "tools_server": true,
+      "rag_server": true
+    }
+  },
+  "GET /api/goals": {
+    "type": "goals",
+    "running": false,
+    "pausing": false,
+    "current": null,
+    "stage": "",
+    "awaiting": null,
+    "note": "",
+    "settings": {
+      "plan": true,
+      "fail": "stop",
+      "model": ""
+    },
+    "goals": []
+  },
+  "GET /api/devices": {
+    "devices": [
+      {
+        "name": "recorder",
+        "paired": "2026-11-09T00:10:00-0600",
+        "last_seen": "2026-11-09T00:10:00-0600",
+        "tailscale_login": ""
+      }
+    ],
+    "you": "recorder"
+  },
+  "POST /api/goals": {
+    "type": "goals",
+    "running": false,
+    "pausing": false,
+    "current": null,
+    "stage": "",
+    "awaiting": null,
+    "note": "",
+    "settings": {
+      "plan": true,
+      "fail": "stop",
+      "model": ""
+    },
+    "goals": [
+      {
+        "id": "ba093141e8fb",
+        "text": "Write a file hello.py that prints hello, and run it once.",
+        "done_when": "hello.py exists and running it prints hello",
+        "agents": [],
+        "status": "pending",
+        "route": [],
+        "answer": "",
+        "error": "",
+        "added": "2026-11-09T00:11:03-06:00",
+        "started": "",
+        "finished": "",
+        "check": ""
+      }
+    ]
+  },
+  "DELETE /api/goals/{id}": {
+    "type": "goals",
+    "running": true,
+    "pausing": false,
+    "current": null,
+    "stage": "",
+    "awaiting": null,
+    "note": "",
+    "settings": {
+      "plan": true,
+      "fail": "stop",
+      "model": ""
+    },
+    "goals": []
+  }
+}

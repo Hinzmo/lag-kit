@@ -1,0 +1,6 @@
+{"type": "start", "loads": 1, "stages": [{"name": "solo", "model": "no-such-model:1"}]}
+{"type": "stage", "name": "solo", "model": "no-such-model:1", "role": "stage", "loaded": true}
+{"type": "turn_error", "message": "ResponseError: model 'no-such-model:1' not found (status code: 404)", "attempt": 1}
+{"type": "turn_error", "message": "ResponseError: model 'no-such-model:1' not found (status code: 404)", "attempt": 2}
+{"type": "turn_error", "message": "ResponseError: model 'no-such-model:1' not found (status code: 404)", "attempt": 3}
+{"type": "done", "answer": "(stopped: 3 malformed turns; last was ResponseError: model 'no-such-model:1' not found (status code: 404))"}
