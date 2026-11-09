@@ -240,6 +240,14 @@ flat. Prefill tracks tokens actually used. A wider lead window is also capped in
 `Pipeline._brief`, which is bounded to fit the 8192 stage that reads it: a plan written wide
 and read narrow is truncated **silently**.
 
+**MLX builds ignore `num_ctx`.** On Apple Silicon, Ollama serves some tags as MLX builds
+(`gemma4:e4b`, nvfp4). Measured 2026-11-08: at `num_ctx` 8192 it read a 25,414-token prompt
+whole; resident size (9.4–9.9 GB) and speed (~78 tok/s) were the same from 8192 to 131072,
+and `ollama ps` kept showing the first value. For such a tag the setting sizes only
+`Pipeline._fit`'s per-stage budget (`num_ctx` × 4 chars × 0.55) and what the console
+reports. `num_predict`, `think`, `temperature` and `keep_alive` were all honoured. Before
+trusting `num_ctx` on a new tag, send a prompt longer than it and read `prompt_eval_count`.
+
 If a run feels slow, the cause is usually **thinking**, not the window: a one-stage run
 answering `1 2 3` emitted 140 thinking tokens against 5 answer tokens. Persona
 `thinking_mode` is wired through to `ollama.chat(think=...)`, with a one-shot retry without
