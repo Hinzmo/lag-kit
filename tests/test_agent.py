@@ -18,7 +18,7 @@ import pytest
 
 from lag import agent as agent_mod
 from lag import tools as tools_mod
-from lag.agent import AgentLoop, GoalSpec, stop_path
+from lag.agent import AgentLoop, AgentState, GoalSpec, stop_path
 
 
 @pytest.fixture(autouse=True)
@@ -685,3 +685,25 @@ class TestOneAgentAtATime:
             holder.send_signal(signal.SIGKILL)
             holder.wait(timeout=10)
         assert agent_mod.running_agent() is None
+
+
+class TestNamesStayInTheAgentsFolder:
+    """A name becomes the state file, the stop file and the sandbox workspace. It was
+    checked only on save, so an unsaved run named '../../..' had the home folder
+    mounted read-write as its workspace."""
+
+    @pytest.mark.parametrize("name", ["../../..", "../x", "a/b", "/abs", "", ".hidden",
+                                      "x\n", "two words"])
+    def test_a_spec_with_a_path_name_is_refused(self, name):
+        with pytest.raises(ValueError, match="invalid agent name"):
+            GoalSpec(goal="g", name=name)
+
+    def test_ordinary_names_still_work(self):
+        assert GoalSpec(goal="g", name="nightly-audit_2.v1").name == "nightly-audit_2.v1"
+
+    def test_the_stop_file_cannot_escape(self):
+        with pytest.raises(ValueError):
+            stop_path("../x")
+
+    def test_state_for_a_path_name_is_simply_absent(self):
+        assert AgentState.load("../../etc/x") is None

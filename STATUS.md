@@ -1,13 +1,13 @@
 # local-agent-kit v2 — status
 
-Last updated **2026-11-01**. This is the living status doc: what works, how it works, and
+Last updated **2026-11-08**. This is the living status doc: what works, how it works, and
 what's left. Working rules for Claude Code live in `CLAUDE.md`.
 
 ---
 
 ## Where it stands
 
-The six original phases are done, and the kit has grown well past them. **518 tests pass**
+The six original phases are done, and the kit has grown well past them. **566 tests pass**
 with Docker running (four real-container tests skip without it). Primary box is the **MacBook Air M4**;
 the CPU-only Ubuntu machine it was built on is secondary.
 
@@ -291,7 +291,7 @@ list live from Ollama.
    lists installed tags, their capabilities and which roles use them.
 3. For development add the test extras: `.venv/bin/python -m pip install -e ".[dev]"`.
 4. Start **Docker Desktop** if you want agent mode (and the 2 sandbox tests).
-5. `.venv/bin/python -m pytest` — expect 518 passing with Docker running; without it, 4 real-container tests skip.
+5. `.venv/bin/python -m pytest` — expect 566 passing with Docker running; without it, 4 real-container tests skip.
    `cd tests/js && npm install` enables the console boot test.
 
 ```bash

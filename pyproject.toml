@@ -2,7 +2,7 @@
 name = "local-agent-kit"
 version = "0.2.0"
 description = "Fully offline multi-agent harness over Ollama, with MCP tooling and RAG."
-requires-python = ">=3.10"
+requires-python = ">=3.12"   # 3.11+ for BaseExceptionGroup; 3.12 is what is tested
 license = "MIT"
 license-files = ["LICENSE"]
 authors = [{ name = "Justin Hinzman" }]

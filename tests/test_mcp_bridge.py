@@ -296,10 +296,13 @@ class TestBridgeLifecycle:
         try:
             assert any(t.name == "now" for t in b.tools)
             assert b.call("now", {}).strip()
+            assert b.alive
         finally:
             b.close()
-        with pytest.raises(RuntimeError, match="closed"):
-            b.call("now", {})
+        # After close a call is a tool failure the model can read, not an exception
+        # that ends the run.
+        assert not b.alive
+        assert "has stopped" in b.call("now", {})
 
     def test_a_failed_build_leaves_nothing_behind(self, broken_server):
         """The leak that actually happened: the first server starts, the second dies,
@@ -362,3 +365,81 @@ def test_the_web_server_closes_its_cached_providers_on_shutdown():
     with TestClient(web.app):
         web._provider_cache["mcp"] = MCPToolProvider([bridge])
     assert bridge.closed == 1 and "mcp" not in web._provider_cache
+
+
+def _server_pid(script: str) -> int:
+    out = subprocess.run(["ps", "-A", "-o", "pid=,ppid=,command="],
+                         capture_output=True, text=True).stdout
+    (pid,) = [int(r.split()[0]) for r in out.splitlines()
+              if r.split()[1] == str(os.getpid()) and script in r]
+    return pid
+
+
+class TestCallsNeverRaise:
+    """Over MCP a tool call used to raise on a timeout or a dead server, and the run
+    ended. Every other tool failure is text the model reads; these are too."""
+
+    def test_the_call_timeout_outlasts_every_tool(self):
+        # sleep_for allows 300 s and run_shell 60 s. The tool's own limit has to fire
+        # first, or a call that was still fine is abandoned.
+        assert mcp_client.CALL_TIMEOUT > 300
+
+    def test_a_slow_call_comes_back_as_text(self, monkeypatch):
+        monkeypatch.setattr(mcp_client, "CALL_TIMEOUT", 0.5)
+        b = MCPBridge(sys.executable, [TOOLS_SERVER])
+        try:
+            out = b.call("sleep_for", {"seconds": 5})
+            assert "took longer than" in out
+            assert b.alive                      # slow is not dead
+        finally:
+            b.close()
+
+    def test_a_dead_server_is_reported_and_marks_the_bridge(self):
+        import signal
+
+        b = MCPBridge(sys.executable, [TOOLS_SERVER])
+        try:
+            os.kill(_server_pid("tools_server.py"), signal.SIGKILL)
+            time.sleep(0.3)
+            out = b.call("now", {})
+            assert "failed" in out
+            assert not b.alive
+            provider = MCPToolProvider([b])
+            assert not provider.alive           # so the console builds a new one
+        finally:
+            b.close()
+
+
+class TestEmbedSettingsReachTheServers:
+    """The RAG server searched with its built-in embed model, whatever `lag setup`
+    had ingested with; a store of a different vector size then broke."""
+
+    def test_config_becomes_server_flags(self):
+        from lag.config import server_args
+
+        cfg = {"models": {"embed": "mxbai-embed-large"}, "ollama_base_url": "http://h:1"}
+        assert server_args(cfg) == ["--embed-model=mxbai-embed-large",
+                                    "--ollama-host=http://h:1"]
+        assert server_args({}) == []            # unset: the servers keep their defaults
+
+    def test_every_server_is_started_with_them(self, monkeypatch):
+        started = []
+
+        class FakeBridge:
+            def __init__(self, command, args):
+                started.append(args)
+
+        monkeypatch.setattr(mcp_client, "MCPBridge", FakeBridge)
+        cfg = {"models": {"embed": "e:1"}, "ollama_base_url": "http://h:1"}
+        MCPToolProvider.from_config(cfg)
+        assert len(started) == 2
+        for args in started:
+            assert args[1:] == ["--embed-model=e:1", "--ollama-host=http://h:1"]
+
+    def test_the_tools_server_accepts_them(self):
+        b = MCPBridge(sys.executable, [TOOLS_SERVER, "--embed-model=e:1",
+                                       "--ollama-host=http://127.0.0.1:9"])
+        try:
+            assert b.call("now", {}).strip()
+        finally:
+            b.close()

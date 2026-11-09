@@ -1,8 +1,11 @@
 """`lag` command-line interface."""
 from __future__ import annotations
 import subprocess
-import typer
 from pathlib import Path
+from typing import Annotated
+
+import typer
+
 from .agent import AGENT_DIR
 from .config import load_config
 from .ollama_client import OllamaClient
@@ -35,7 +38,7 @@ def run(
         from .mcp_client import MCPToolProvider
         provider = MCPToolProvider.from_config(cfg)
     else:
-        provider = LocalToolProvider()
+        provider = LocalToolProvider.from_config(cfg)
 
     try:
         client = OllamaClient.from_config(cfg, model)
@@ -95,6 +98,10 @@ def pipeline(
 def serve(
     host: str = typer.Option("127.0.0.1", help="Bind address."),
     port: int = typer.Option(8765, help="Port."),
+    allow_host: Annotated[list[str] | None, typer.Option(
+        "--allow-host",
+        help="Another name the console may be reached by, e.g. a tailnet name. "
+             "Repeatable. localhost and the bind address are always allowed.")] = None,
 ):
     """Launch the local web console (the phosphor UI) over the harness.
 
@@ -104,9 +111,17 @@ def serve(
     """
     import uvicorn
 
+    from . import web
     from .web import app as web_app
 
+    # Requests must name a known host; see web._only_known_callers.
+    allow_host = allow_host or []
+    for name in (host, *allow_host):
+        web.allow_host(name)
     typer.echo(f"lag console → http://{host}:{port}   (Ctrl-C to stop)")
+    if host in ("0.0.0.0", "::") and not allow_host:
+        typer.echo("  note: only localhost names are served; add the names you will "
+                   "use with --allow-host", err=True)
     uvicorn.run(web_app, host=host, port=port, log_level="info")
 
 
@@ -312,10 +327,14 @@ def agent_start(
         network = _ask("shell network (on/off)", "on" if network else "off").lower() != "off"
         name = _ask("run name", name)
 
-    spec = GoalSpec(goal=goal, success=success, constraints=constraints,
-                    persona=persona, interval=interval,
-                    max_cycles=max_cycles, name=name, network=network,
-                    max_failures=max_failures, max_idle=max_idle, mcp=mcp)
+    try:
+        spec = GoalSpec(goal=goal, success=success, constraints=constraints,
+                        persona=persona, interval=interval,
+                        max_cycles=max_cycles, name=name, network=network,
+                        max_failures=max_failures, max_idle=max_idle, mcp=mcp)
+    except ValueError as e:
+        typer.echo(f"  {e}")
+        raise typer.Exit(1) from None
     return _run_spec(spec, cfg, mcp=mcp)
 
 
@@ -385,8 +404,13 @@ def agent_new(
     tools: str = typer.Option("", help="Comma-separated tool allow-list. Empty = every tool."),
 ):
     """Define a saved agent you can run, disable, and edit later."""
-    from .agent import GoalSpec
+    from .agent import GoalSpec, _check_name
 
+    try:
+        _check_name(name)                 # before the questions, not after them
+    except ValueError as e:
+        typer.echo(f"  {e}")
+        raise typer.Exit(1) from None
     typer.echo(f"\n  defining agent {name!r}\n")
     goal = _ask("goal (required)")
     if not goal:
@@ -527,7 +551,11 @@ def agent_stop(name: str = typer.Argument("default", help="Run name.")):
     """Ask a running agent to stop after its current cycle."""
     from .agent import stop_path
 
-    p = stop_path(name)
+    try:
+        p = stop_path(name)
+    except ValueError as e:
+        typer.echo(f"  {e}")
+        raise typer.Exit(1) from None
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text("stop")
     typer.echo(f"stop requested for {name!r} — it will exit within a second of its "

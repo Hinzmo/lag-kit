@@ -225,3 +225,68 @@ class TestOutOfTurns:
             c, _ = self._client(monkeypatch, last)
             out = c.run("go", tool_provider=self.Tools(), max_iters=2, verbose=False)
             assert out == "(stopped: hit max_iters without a final answer)"
+
+
+class TestStreamedThinkFallback:
+    """A tag that rejects `think` falls back to its default. That fallback used to
+    cover only blocking calls: a streamed request is made lazily, on the first
+    chunk, after _chat's try had already returned. The console, agents and goals all
+    stream, so the turn failed three times and the run stopped."""
+
+    def _client(self, monkeypatch):
+        import lag.ollama_client as oc
+        oc._CAPS.clear()
+        calls = []
+
+        class FakeClient:
+            def __init__(self, host=None): pass
+            def show(self, model):
+                return SimpleNamespace(capabilities=["completion", "tools", "thinking"])
+
+            def chat(self, **kw):
+                calls.append(kw)
+
+                def chunks():            # lazy, like ollama's own stream
+                    if "think" in kw:
+                        raise RuntimeError('"m" does not support thinking')
+                    yield SimpleNamespace(message=SimpleNamespace(
+                        content="hi", thinking=None, tool_calls=None))
+                return chunks()
+
+        monkeypatch.setattr(oc.ollama, "Client", FakeClient)
+        return OllamaClient(model="m", host="h", think=True), calls
+
+    def test_a_streamed_turn_retries_without_think(self, monkeypatch):
+        c, calls = self._client(monkeypatch)
+        events = []
+        assert c.run("hello", on_event=events.append) == "hi"
+        assert "think" in calls[0] and "think" not in calls[1]
+        assert not [e for e in events if e["type"] == "turn_error"]
+
+    def test_the_refusal_is_learned_once(self, monkeypatch):
+        c, calls = self._client(monkeypatch)
+        c.run("a", on_event=lambda e: None)
+        c.run("b", on_event=lambda e: None)
+        assert sum("think" in k for k in calls) == 1
+
+
+class TestARaisingProviderDoesNotEndTheRun:
+    """Providers return failures as text. One that raises anyway is reported to the
+    model like any other failure, and the run carries on."""
+
+    def test_the_error_becomes_the_tool_result(self, monkeypatch):
+        c = OllamaClient(model="m", host="http://x")
+        fn = SimpleNamespace(name="t", arguments={})
+        turns = iter([SimpleNamespace(content="", tool_calls=[SimpleNamespace(function=fn)]),
+                      SimpleNamespace(content="recovered", tool_calls=None)])
+        monkeypatch.setattr(c, "_turn", lambda m, s, o: next(turns))
+        monkeypatch.setattr(c, "has_tools", True)
+
+        def boom(name, args):
+            raise TimeoutError("slow")
+
+        provider = SimpleNamespace(schemas=lambda: [{"type": "function"}], call=boom)
+        events = []
+        assert c.run("go", tool_provider=provider, on_event=events.append) == "recovered"
+        result = [e for e in events if e["type"] == "tool_result"][0]
+        assert "TimeoutError" in result["content"]

@@ -19,6 +19,29 @@ def load_config(path: str | None = None) -> dict:
     raise FileNotFoundError("No config found. Run lag setup from the repo root.")
 
 
+def embed_settings(cfg: dict) -> dict:
+    """The embed model and Ollama host from config, as keyword arguments for rag.
+
+    Only keys the config sets are returned, so rag's own defaults fill the rest. Every
+    process that embeds — `lag setup`'s ingest, the RAG server, `remember` — must use
+    the same model: a store built at one vector size cannot be searched at another.
+    """
+    out = {}
+    model = (cfg.get("models") or {}).get("embed")
+    if model:
+        out["model"] = model
+    if cfg.get("ollama_base_url"):
+        out["host"] = cfg["ollama_base_url"]
+    return out
+
+
+def server_args(cfg: dict) -> list[str]:
+    """embed_settings as command-line flags for the MCP servers."""
+    s = embed_settings(cfg)
+    return ([f"--embed-model={s['model']}"] if "model" in s else []) + \
+           ([f"--ollama-host={s['host']}"] if "host" in s else [])
+
+
 def resolve_model(spec: str, cfg: dict) -> str:
     """Resolve a persona's `model:` field to a concrete Ollama tag.
 

@@ -28,4 +28,15 @@ for _fn in TOOLS.values():
     mcp.tool()(_fn)  # FastMCP builds the schema from each function's hints + docstring
 
 if __name__ == "__main__":
+    import argparse
+
+    from lag.tools import use_embedder
+
+    # The harness passes the configured embedder so remember() indexes with the same
+    # model the RAG server searches with. Unknown flags are ignored, not fatal.
+    p = argparse.ArgumentParser(description="lag tools MCP server")
+    p.add_argument("--embed-model")
+    p.add_argument("--ollama-host")
+    args, _ = p.parse_known_args()
+    use_embedder(args.embed_model, args.ollama_host)
     mcp.run()  # stdio transport by default

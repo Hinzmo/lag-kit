@@ -9,6 +9,9 @@ so swapping direct dispatch for a real MCP server is a one-line change at the ca
 site, not a rewrite of the loop.
 """
 from __future__ import annotations
+
+import itertools
+
 import ollama
 
 from .render import StreamCleaner, clean_text, format_call, humanise
@@ -128,12 +131,31 @@ class OllamaClient:
         raise" rule the tool layer follows.
         """
         try:
-            return self.client.chat(**kw, **self._chat_kwargs())
+            return self._started(self.client.chat(**kw, **self._chat_kwargs()), kw)
         except Exception as e:  # noqa: BLE001
             if self.think is None or "think" not in str(e).lower():
                 raise
-            fallback = {k: v for k, v in self._chat_kwargs().items() if k != "think"}
-            return self.client.chat(**kw, **fallback)
+            # Learned once per client, so later turns do not each pay a refused request.
+            self.think = None
+            return self._started(self.client.chat(**kw, **self._chat_kwargs()), kw)
+
+    @staticmethod
+    def _started(response, kw):
+        """A streamed response with its request already made.
+
+        With stream=True, ollama returns a lazy generator: the HTTP request, and any
+        refusal of `think`, happen on the first iteration — after _chat's try has
+        returned. Taking the first chunk here moves that error inside the try, so the
+        fallback covers the streamed path that the console, agents and goals all use.
+        """
+        if not kw.get("stream"):
+            return response
+        it = iter(response)
+        try:
+            first = next(it)
+        except StopIteration:
+            return iter(())
+        return itertools.chain([first], it)
 
     def _turn(self, messages: list, schemas, on_event):
         """One assistant turn, streamed when someone is listening.
@@ -249,7 +271,12 @@ class OllamaClient:
                     # is why the activity window cannot drift back to raw JSON.
                     on_event({"type": "tool", "name": name, "args": args,
                               "pretty": format_call(name, args)})
-                result = tool_provider.call(name, args)
+                try:
+                    result = tool_provider.call(name, args)
+                except Exception as e:  # noqa: BLE001
+                    # Providers return errors as text, but one that raises must not
+                    # end the run: the model can still read the failure and adapt.
+                    result = f"error in {name}: {type(e).__name__}: {e}"
                 if on_event:
                     on_event({"type": "tool_result", "name": name,
                               "content": humanise(str(result), 2000)})

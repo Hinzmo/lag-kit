@@ -41,6 +41,12 @@ def _unwrap(e: BaseException) -> BaseException:
     return e
 
 
+#: How long one tool call may take over MCP. Longer than any tool's own limit
+#: (sleep_for allows up to 300 s), so the tool's limit fires first and its message
+#: reaches the model, instead of the bridge giving up on a call that was still fine.
+CALL_TIMEOUT = 330
+
+
 class MCPBridge:
     """Owns a persistent MCP session on a background event loop.
 
@@ -64,6 +70,7 @@ class MCPBridge:
         self.tools = []
         self.session = None
         self.close_error: str | None = None     # a teardown problem, kept, never raised
+        self.broken: str | None = None           # why the connection failed, if it has
         self._closed = False
         self._ready: concurrent.futures.Future = concurrent.futures.Future()
         self._finished: concurrent.futures.Future = concurrent.futures.Future()
@@ -108,10 +115,35 @@ class MCPBridge:
             self.session = None
             self._finished.set_result(None)
 
+    @property
+    def alive(self) -> bool:
+        """False once closed, or once a call failed at the connection level.
+
+        A server that dies does not end the session on its own: the session task stays
+        parked until close(). The first call after the death fails, and that failure
+        is what marks the bridge broken, so an owner can replace it.
+        """
+        return self.session is not None and not self._closed and self.broken is None
+
     def call(self, name: str, args: dict) -> str:
-        if self.session is None:
-            raise RuntimeError("MCP session is closed")
-        result = self._submit(self.session.call_tool(name, args or {})).result(timeout=60)
+        """Run one tool. Returns text, never raises: a timeout or a dead server is
+        reported to the model as a string, like any other tool failure."""
+        session = self.session
+        if session is None:
+            why = f" ({self.close_error})" if self.close_error else ""
+            return f"error: the MCP server for {name} has stopped{why}"
+        fut = self._submit(session.call_tool(name, args or {}))
+        try:
+            result = fut.result(timeout=CALL_TIMEOUT)
+        except concurrent.futures.TimeoutError:
+            fut.cancel()
+            return f"error: {name} took longer than {CALL_TIMEOUT}s and was abandoned"
+        except Exception as e:  # noqa: BLE001 - tools report, never raise
+            # A tool's own failure comes back as a result, not an exception, so an
+            # exception here means the connection itself failed.
+            e = _unwrap(e)
+            self.broken = f"{type(e).__name__}: {e}"
+            return f"error: the MCP server for {name} failed: {self.broken}"
         # call_tool returns content blocks; pull text out of each
         return "\n".join(getattr(c, "text", str(c)) for c in result.content)
 
@@ -186,13 +218,20 @@ class MCPToolProvider:
         # All or nothing: if a later server fails, the ones already started are closed
         # before the error propagates. Raising past them orphaned a live server and its
         # thread on every attempt — and the web console retries on every request.
+        #
+        # Each server gets the configured embed model and Ollama host as flags. Left to
+        # its own defaults, the RAG server searched with nomic-embed-text whatever
+        # `lag setup` had ingested with, and a store of another vector size broke.
+        from .config import server_args
+
+        flags = server_args(cfg)
         bridges = []
         try:
             for server in (servers or cls.DEFAULT_SERVERS):
                 path = Path(server)
                 if not path.is_absolute():
                     path = _REPO_ROOT / path
-                bridges.append(MCPBridge(sys.executable, [str(path)]))
+                bridges.append(MCPBridge(sys.executable, [str(path), *flags]))
         except BaseException:
             for b in bridges:
                 b.close()
@@ -238,6 +277,13 @@ class MCPToolProvider:
         for b in self.bridges:
             with contextlib.suppress(Exception):   # one bad bridge must not strand the rest
                 b.close()
+
+    @property
+    def alive(self) -> bool:
+        """True while every server is still answering. A long-lived owner (the web
+        console) checks this before reuse, so one crashed server does not leave every
+        later request failing until a restart."""
+        return all(getattr(b, "alive", True) for b in self.bridges)
 
     def __enter__(self):
         return self

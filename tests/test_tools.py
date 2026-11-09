@@ -421,3 +421,24 @@ class TestSSRFAddressCoverage:
     @pytest.mark.parametrize("host", ["8.8.8.8", "1.1.1.1", "[2606:4700:4700::1111]"])
     def test_public_addresses_still_pass(self, host):
         assert tools._ssrf_block_reason(f"http://{host}/") is None, host
+
+
+class TestRememberUsesTheConfiguredEmbedder:
+    """remember() indexed with rag's built-in model whatever config said."""
+
+    def test_from_config_sets_the_embedder(self, monkeypatch, tmp_path):
+        import sys
+        import types
+
+        from lag import tools
+
+        seen = {}
+        fake_rag = types.SimpleNamespace(
+            index_note=lambda key, value, **kw: seen.update(kw) or 1)
+        monkeypatch.setitem(sys.modules, "lag.rag", fake_rag)
+        monkeypatch.setattr("lag.rag", fake_rag, raising=False)
+        monkeypatch.setattr(tools, "_EMBED", {})
+        tools.LocalToolProvider.from_config(
+            {"models": {"embed": "e:1"}, "ollama_base_url": "http://h:1"})
+        tools._index_memory("k", "v")
+        assert seen == {"model": "e:1", "host": "http://h:1"}
