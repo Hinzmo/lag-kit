@@ -7,7 +7,7 @@ what's left. Working rules for Claude Code live in `CLAUDE.md`.
 
 ## Where it stands
 
-The six original phases are done, and the kit has grown well past them. **566 tests pass**
+The six original phases are done, and the kit has grown well past them. **595 tests pass**
 with Docker running (four real-container tests skip without it). Primary box is the **MacBook Air M4**;
 the CPU-only Ubuntu machine it was built on is secondary.
 
@@ -200,6 +200,29 @@ Host-side file tools are path-translated and write-checked in Python. The comman
 deny-list is defence in depth, not the boundary. Supervised `lag run` / `pipeline` are
 **not** sandboxed (deliberate; see *What's left*).
 
+### Phone access (`phone.py`, `lag serve --phone-port`)
+
+The phone app reaches `lag serve` through `tailscale serve`, which forwards only to
+127.0.0.1, so by address a phone looks like the Mac's own browser. It therefore gets a
+second listener (`--phone-port`, always 127.0.0.1) in the same process, told apart by the
+port a request arrived on. On that port:
+
+- **Every request needs a device key** (`Authorization: Bearer …`), except `POST /api/pair`.
+  `lag phone pair` shows a QR code and an 8-character code (5 minutes, single use, 5 tries);
+  the phone trades it for a 256-bit key. `phone/devices.json` keeps only the SHA-256.
+- **A key is tied to the Tailscale login that paired it**, when Serve supplies one.
+- **Revoking is from the Mac only** (`lag phone revoke`, or `DELETE /api/devices/{name}` on
+  the console port). It takes effect on the phone's next request.
+- **Chats run in the sandbox**: `/api/run` and `/api/stream` wrap the tools in one shared
+  container (workspace `agents/workspaces/phone`), started on the first phone chat,
+  checked once a minute, stopped at shutdown. No Docker means no phone chat (fails closed).
+- **Refused requests are logged** to `phone/refused.log`, never with the key.
+- The Host check is skipped there (the key is the lock); the cross-site Origin check stays.
+
+Verified live 2026-11-08: pair over curl, key accepted, code single-use, a phone chat's
+`uname -s` answered `Linux` from the container, revoke cut the key off at once, and Ctrl-C
+stopped both listeners and removed the containers.
+
 ### Study mode
 
 `lag study add | ask | quiz | cards | review | status`. Each course is its own Chroma
@@ -291,7 +314,7 @@ list live from Ollama.
    lists installed tags, their capabilities and which roles use them.
 3. For development add the test extras: `.venv/bin/python -m pip install -e ".[dev]"`.
 4. Start **Docker Desktop** if you want agent mode (and the 2 sandbox tests).
-5. `.venv/bin/python -m pytest` — expect 566 passing with Docker running; without it, 4 real-container tests skip.
+5. `.venv/bin/python -m pytest` — expect 595 passing with Docker running; without it, 4 real-container tests skip.
    `cd tests/js && npm install` enables the console boot test.
 
 ```bash

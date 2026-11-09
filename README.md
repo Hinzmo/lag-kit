@@ -134,6 +134,8 @@ lag run "what is this project?"           # one agent, local tools
 lag run "same thing" --mcp                # same tools, over the MCP boundary
 lag pipeline "design a url shortener"     # staged agents
 lag serve                                 # web console and goal queue
+lag serve --phone-port 8766               # plus a key-only port for the phone app
+lag phone pair                            # QR code + one-time code; then: devices | revoke
 lag goals add "…" --done-when "…"         # then: ls | run | watch | show | pause | skip | rm
 lag agent new                             # then: list | start | status | stop
 lag study add <course> <path>             # then: ask | quiz | cards | review
@@ -184,6 +186,10 @@ Pick models that support tools (`lag models` shows which do).
   `127.0.0.1`, `::1` and its bind address, and refuses any POST whose `Origin` is another
   site. That keeps other web pages out, including by DNS rebinding. To reach it by
   another name, such as a tailnet name, add `--allow-host NAME`.
+- **Phones get a port of their own.** `lag serve --phone-port 8766` listens on 127.0.0.1
+  for `tailscale serve` to forward to. Every request there needs a device key from
+  `lag phone pair` (stored on the Mac only as a hash; `lag phone revoke` cuts a phone off),
+  and chats from a phone run in the same sandbox as goals.
 - **Model output is shown as text.** Answers, tool names and agent names are escaped
   before the console renders them, because a fetched page can steer what a model writes.
 
