@@ -29,6 +29,7 @@ import json
 import os
 import queue
 import threading
+import time
 from pathlib import Path
 
 import ollama
@@ -93,6 +94,9 @@ async def _lifespan(_app):
         close = getattr(_provider_cache.pop(key), "close", None)
         if close:
             close()
+    box = _phone_box.pop("box", None)
+    if box is not None:
+        box.stop()
 
 
 app = FastAPI(title="lag console", lifespan=_lifespan)
@@ -134,19 +138,173 @@ def _hostname(netloc: str) -> str:
 _SAFE_METHODS = ("GET", "HEAD", "OPTIONS")
 
 
+# ── the phone port ─────────────────────────────────────────────────────────────
+# `lag serve --phone-port` adds a second listener, on 127.0.0.1 only, for the phone app
+# through `tailscale serve`. Serve forwards to 127.0.0.1, so a phone request looks like
+# the Mac's own browser by address; the port is what tells them apart. Every request on
+# it needs a device key (see phone.py), and chats there run in the sandbox.
+PHONE_PORT: int | None = None
+
+
+def use_phone_port(port: int | None) -> None:
+    global PHONE_PORT
+    PHONE_PORT = port or None
+
+
+def _on_phone_port(request: Request) -> bool:
+    server = request.scope.get("server") or (None, None)
+    return PHONE_PORT is not None and server[1] == PHONE_PORT
+
+
+def _cross_site(request: Request) -> str | None:
+    origin = request.headers.get("origin")
+    if (request.method not in _SAFE_METHODS and origin is not None
+            and origin.split("://", 1)[-1].lower() != request.headers.get("host", "").lower()):
+        return origin
+    return None
+
+
+async def _phone_gate(request: Request, call_next):
+    """Every phone-port request carries a paired device's key, except the pairing
+    request itself. The Host check is skipped here: the key is the lock, and Serve may
+    pass the tailnet name through as Host."""
+    from . import phone
+
+    path = request.url.path
+    login = request.headers.get("tailscale-user-login", "")
+    if _cross_site(request):
+        phone.log_refused(path, "cross-site request", login)
+        return JSONResponse(status_code=403, content={"error": "cross-site request refused"})
+    if path == "/api/pair":
+        return await call_next(request)
+    auth = request.headers.get("authorization", "")
+    key = auth[7:].strip() if auth[:7].lower() == "bearer " else ""
+    device = phone.lookup(key)
+    if device is None:
+        phone.log_refused(path, "unknown key" if key else "no key", login)
+        return JSONResponse(status_code=401, content={
+            "error": "this phone is not paired, or was revoked; "
+                     "pair it with `lag phone pair` on the Mac"})
+    if device.get("tailscale_login") and login and login != device["tailscale_login"]:
+        phone.log_refused(path, f"key paired by {device['tailscale_login']}", login)
+        return JSONResponse(status_code=403, content={
+            "error": "this key was paired by a different Tailscale user"})
+    request.state.device = phone.public(device)
+    phone.touch(device)
+    return await call_next(request)
+
+
 @app.middleware("http")
 async def _only_known_callers(request: Request, call_next):
+    if _on_phone_port(request):
+        return await _phone_gate(request, call_next)
     host = request.headers.get("host", "")
     if _hostname(host) not in allowed_hosts():
         return JSONResponse(status_code=403, content={
             "error": f"host {host!r} is not allowed; add it with "
                      "`lag serve --allow-host NAME` or LAG_ALLOWED_HOSTS"})
-    origin = request.headers.get("origin")
-    if (request.method not in _SAFE_METHODS and origin is not None
-            and origin.split("://", 1)[-1].lower() != host.lower()):
+    origin = _cross_site(request)
+    if origin:
         return JSONResponse(status_code=403, content={
             "error": f"cross-site request from {origin!r} refused"})
     return await call_next(request)
+
+
+# ── pairing and devices ───────────────────────────────────────────────────────
+
+class PairRequest(BaseModel):
+    code: str
+    name: str = "phone"
+
+
+@app.post("/api/pair")
+def pair(req: PairRequest, request: Request):
+    """Trade the code shown by `lag phone pair` for this phone's device key. The key
+    is in this reply and nowhere else; the Mac keeps only its hash."""
+    from . import phone
+
+    if not _on_phone_port(request):
+        return JSONResponse(status_code=404, content={
+            "error": "pairing happens on the phone port (lag serve --phone-port)"})
+    login = request.headers.get("tailscale-user-login", "")
+    out = phone.redeem(req.code, req.name, login)
+    if isinstance(out, str):
+        phone.log_refused("/api/pair", out, login)
+        return JSONResponse(status_code=403, content={"error": out})
+    key, device = out
+    return {"key": key, "device": device}
+
+
+@app.get("/api/devices")
+def devices_list(request: Request):
+    from . import phone
+
+    me = getattr(request.state, "device", None)
+    return {"devices": phone.devices(), "you": me["name"] if me else None}
+
+
+@app.delete("/api/devices/{name}")
+def devices_revoke(name: str, request: Request):
+    """Revoke a phone. From the Mac only: a lost phone must not be able to lock out
+    the others, or quietly re-pair itself."""
+    from . import phone
+
+    if _on_phone_port(request):
+        return JSONResponse(status_code=403, content={"error": "revoke phones from the Mac"})
+    if not phone.revoke(name):
+        return JSONResponse(status_code=404, content={"error": f"no paired phone named {name!r}"})
+    return {"revoked": name}
+
+
+# ── phone chats run in the sandbox ────────────────────────────────────────────
+# A phone is not at the keyboard, so its chats get the shell goals and agents get: a
+# container that can read the project and write only its own workspace. One container,
+# started on the first phone chat and kept for the next ones: a container per message
+# would add seconds to every reply. It is checked at most once a minute, and replaced
+# if it has gone (Docker restarted, say).
+_phone_box: dict = {}
+_phone_box_lock = threading.Lock()
+_BOX_CHECK_EVERY = 60
+
+
+def _box_running(box) -> bool:
+    if time.monotonic() - _phone_box.get("checked", 0) < _BOX_CHECK_EVERY:
+        return True
+    r = box._docker([box.cli, "inspect", "-f", "{{.State.Running}}", box.container or "-"])
+    _phone_box["checked"] = time.monotonic()
+    return r.returncode == 0 and r.stdout.strip() == "true"
+
+
+def _phone_sandbox():
+    from .agent import AGENT_DIR
+    from .sandbox import Sandbox, available
+
+    with _phone_box_lock:
+        box = _phone_box.get("box")
+        if box is not None and _box_running(box):
+            return box
+        if box is not None:
+            _phone_box.pop("box")
+            box.stop()
+        ok, why = available()
+        if not ok:
+            raise RuntimeError(f"phone chats run in the sandbox, which is unavailable: {why}")
+        box = Sandbox(AGENT_DIR / "workspaces" / "phone", read_root=Path.cwd(), network=True)
+        err = box.start()
+        if err:
+            box.stop()
+            raise RuntimeError(f"the phone sandbox failed to start: {err}")
+        _phone_box.update(box=box, checked=time.monotonic())
+        return box
+
+
+def _for_caller(provider, phone_request: bool):
+    """The tools a request may use: sandboxed when it came in on the phone port."""
+    if not phone_request:
+        return provider
+    from .sandbox import SandboxedProvider
+
+    return SandboxedProvider(provider, _phone_sandbox())
 
 
 def _without_retrieval(provider):
@@ -378,7 +536,7 @@ class RunRequest(BaseModel):
 
 
 @app.post("/api/run")
-def run(req: RunRequest):
+def run(req: RunRequest, request: Request):
     """Run one turn and return the finished answer (blocking in PR1).
 
     Errors are returned as ``{"error": ...}`` with a 200 so the console can show them
@@ -390,6 +548,7 @@ def run(req: RunRequest):
         provider = _provider(cfg, req.mcp)
         if not req.retrieval:
             provider = _without_retrieval(provider)
+        provider = _for_caller(provider, _on_phone_port(request))
         if req.mode in (None, "", "solo"):
             model = cfg["models"]["worker"]
             client = OllamaClient.from_config(cfg, model)
@@ -469,7 +628,7 @@ def _sse(events: "queue.Queue"):
 
 
 @app.post("/api/stream")
-def stream(req: RunRequest):
+def stream(req: RunRequest, request: Request):
     """Same run as /api/run, but events are pushed as they happen.
 
     The harness loop is synchronous, so the work goes on a daemon thread and pushes
@@ -483,6 +642,7 @@ def stream(req: RunRequest):
     # cold load each. So while a goal runs, chat uses the model it is on.
     runner = _goal_runner_cache.get("runner")
     shared = runner.model if runner is not None and runner.current else ""
+    from_phone = _on_phone_port(request)
 
     def work(emit) -> None:
         if shared:
@@ -491,6 +651,7 @@ def stream(req: RunRequest):
         provider = _provider(cfg, req.mcp)
         if not req.retrieval:
             provider = _without_retrieval(provider)
+        provider = _for_caller(provider, from_phone)
 
         if req.mode in (None, "", "solo"):
             model = req.model or cfg["models"]["worker"]

@@ -75,3 +75,6 @@ src/lag/package-lock.json
 # Recovery archive and a local price log that were tracked by mistake
 files.zip
 price.log
+
+# Phone pairing: device key hashes, the pairing code, the refused-request log
+phone/

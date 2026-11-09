@@ -1,5 +1,6 @@
 """`lag` command-line interface."""
 from __future__ import annotations
+import contextlib
 import subprocess
 from pathlib import Path
 from typing import Annotated
@@ -102,6 +103,11 @@ def serve(
         "--allow-host",
         help="Another name the console may be reached by, e.g. a tailnet name. "
              "Repeatable. localhost and the bind address are always allowed.")] = None,
+    phone_port: int = typer.Option(
+        0, "--phone-port",
+        help="Also listen for the phone app on 127.0.0.1:PORT (e.g. 8766), for "
+             "`tailscale serve` to forward to. Every request there needs a paired "
+             "device's key, and chats run in the sandbox. 0 = off."),
 ):
     """Launch the local web console (the phosphor UI) over the harness.
 
@@ -122,7 +128,119 @@ def serve(
     if host in ("0.0.0.0", "::") and not allow_host:
         typer.echo("  note: only localhost names are served; add the names you will "
                    "use with --allow-host", err=True)
-    uvicorn.run(web_app, host=host, port=port, log_level="info")
+    if not phone_port:
+        uvicorn.run(web_app, host=host, port=port, log_level="info")
+        return
+    if phone_port == port:
+        typer.echo("  --phone-port must differ from --port", err=True)
+        raise typer.Exit(1)
+
+    # Two listeners, one process, one app: the phone port is told apart by the port a
+    # request arrived on (web._on_phone_port). It binds to 127.0.0.1 whatever --host
+    # says; tailscale serve is the only way in from the phone. Startup and shutdown
+    # (model warm-up, closing MCP servers, the phone sandbox) run once, on the console.
+    web.use_phone_port(phone_port)
+    typer.echo(f"phone port  → http://127.0.0.1:{phone_port}   (device key required; "
+               f"pair with: lag phone pair)")
+    import asyncio
+
+    servers = [
+        uvicorn.Server(uvicorn.Config(web_app, host=host, port=port, log_level="info")),
+        uvicorn.Server(uvicorn.Config(web_app, host="127.0.0.1", port=phone_port,
+                                      log_level="info", lifespan="off")),
+    ]
+
+    async def both() -> None:
+        # Ctrl-C reaches the listener that installed its handler last; when it stops,
+        # it hands the signal on to the other. Stopping both on the first exit also
+        # covers a listener that fails to start.
+        tasks = [asyncio.create_task(s.serve()) for s in servers]
+        await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+        for s in servers:
+            s.should_exit = True
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+    with contextlib.suppress(KeyboardInterrupt):
+        asyncio.run(both())
+
+
+phone_app = typer.Typer(help="Pair phones with this Mac's lag serve, list them, revoke them.")
+app.add_typer(phone_app, name="phone")
+
+
+def _tailnet_url() -> str | None:
+    """https://<this machine>.<tailnet>.ts.net, if the Tailscale CLI can say."""
+    import json
+    import shutil
+
+    for cli in (shutil.which("tailscale"),
+                "/Applications/Tailscale.app/Contents/MacOS/Tailscale"):
+        if not cli or not Path(cli).exists():
+            continue
+        try:
+            r = subprocess.run([cli, "status", "--json"], capture_output=True,
+                               text=True, timeout=5)
+            name = (json.loads(r.stdout).get("Self") or {}).get("DNSName", "").rstrip(".")
+        except (OSError, ValueError, subprocess.TimeoutExpired):
+            continue
+        if name:
+            return f"https://{name}"
+    return None
+
+
+@phone_app.command("pair")
+def phone_pair(
+    url: str = typer.Option(None, help="Address the phone should use. Default: this "
+                                       "Mac's tailnet name, if Tailscale is installed."),
+    minutes: int = typer.Option(5, help="How long the code works."),
+):
+    """Show a one-time code (and QR code) a phone can trade for its device key."""
+    import json
+
+    from . import phone
+
+    url = url or _tailnet_url()
+    code, _ = phone.new_code(url, minutes)
+    payload = json.dumps({"lag": 1, "url": url or "", "code": code}, separators=(",", ":"))
+    try:
+        import segno
+
+        typer.echo("")
+        segno.make(payload, error="m").terminal(compact=True)
+    except ImportError:
+        typer.echo("  (install segno for a QR code: pip install segno)")
+    typer.echo(f"\n  pairing code : {phone.show_code(code)}   (works once, for {minutes} min, "
+               f"{phone.CODE_TRIES} tries)")
+    typer.echo(f"  server       : {url or '(unknown: type it on the phone, or pass --url)'}")
+    typer.echo("\n  The phone needs Tailscale, plus these running on this Mac:")
+    typer.echo("    lag serve --phone-port 8766")
+    typer.echo("    tailscale serve --bg http://127.0.0.1:8766")
+
+
+@phone_app.command("devices")
+def phone_devices():
+    """List paired phones."""
+    from . import phone
+
+    rows = phone.devices()
+    if not rows:
+        typer.echo("no paired phones — pair one with: lag phone pair")
+        return
+    for d in rows:
+        who = f"   tailscale: {d['tailscale_login']}" if d.get("tailscale_login") else ""
+        typer.echo(f"  {d['name']:<24} paired {d['paired'][:16]}   "
+                   f"last seen {d['last_seen'][:16]}{who}")
+
+
+@phone_app.command("revoke")
+def phone_revoke(name: str = typer.Argument(..., help="The phone's name, as listed.")):
+    """Revoke a phone. Its key stops working on its next request."""
+    from . import phone
+
+    if not phone.revoke(name):
+        typer.echo(f"no paired phone named {name!r} — see: lag phone devices", err=True)
+        raise typer.Exit(1)
+    typer.echo(f"revoked {name}")
 
 
 @app.command()

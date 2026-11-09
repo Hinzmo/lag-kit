@@ -253,6 +253,21 @@ answering `1 2 3` emitted 140 thinking tokens against 5 answer tokens. Persona
 `thinking_mode` is wired through to `ollama.chat(think=...)`, with a one-shot retry without
 `think` for tags that reject it.
 
+## Phone port (`phone.py`)
+
+`lag serve --phone-port PORT` adds a second listener on 127.0.0.1 for the phone app,
+reached through `tailscale serve`. Serve forwards from 127.0.0.1, so **the port a request
+arrived on is the only thing that tells a phone from the Mac's browser**
+(`web._on_phone_port`). Rules:
+
+- Every phone-port request needs a paired device key, except `POST /api/pair`. Keys are
+  stored only as SHA-256; never log or store a raw key.
+- Phone chats (`/api/run`, `/api/stream`) run in the sandbox via `web._for_caller`. Any new
+  endpoint that runs tools must go through it too, or a phone gets the Mac's shell.
+- Revoking is console-port only. A phone must not be able to revoke or re-pair others.
+- `phone.py` files are shared with the CLI process: every read-modify-write takes the
+  `phone/.lock` flock.
+
 ## Live streaming
 
 `OllamaClient.run` and `Pipeline.run` take an optional `on_event` callback — a **side
