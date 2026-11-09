@@ -50,6 +50,20 @@ _UI = _ROOT / "ui" / "console.html"
 # Built once, reused across requests (see module docstring).
 _provider_cache: dict = {}
 
+# The API contract version (contract/v1.json, docs/api-contract.md). Bump it only for a
+# change that breaks a client: a field removed, renamed or retyped. Adding an event
+# type or a field is not breaking, because clients ignore what they do not know.
+CONTRACT_VERSION = 1
+
+
+def _lag_version() -> str:
+    from importlib.metadata import PackageNotFoundError, version
+
+    try:
+        return version("local-agent-kit")
+    except PackageNotFoundError:
+        return "unknown"
+
 
 def _warm() -> None:
     """Get the chat model ready before the first message: loaded, and with the tool
@@ -487,7 +501,7 @@ def state():
     o = cfg.get("ollama", {}) or {}
     num_ctx = (o.get("num_ctx_by_model") or {}).get(chat_model, o.get("num_ctx", 4096))
     return {
-        "version": "0.2.0",
+        "version": _lag_version(),
         "ollama": {"up": up, "available": available, "loaded": loaded,
                    "models": _model_capabilities(cfg, available)},
         "chat_model": chat_model,
@@ -498,6 +512,13 @@ def state():
         "chroma": _chroma_count(cfg),
         "mcp": {"tools_server": True, "rag_server": True},
     }
+
+
+@app.get("/api/version")
+def api_version():
+    """Checked by the phone app on connect: which lag-kit this is, and which contract
+    it speaks. A client built for another contract says which side to update."""
+    return {"lag": _lag_version(), "contract": CONTRACT_VERSION}
 
 
 @app.get("/api/models/watch")

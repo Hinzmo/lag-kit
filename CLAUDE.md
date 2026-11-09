@@ -285,6 +285,13 @@ loop runs on a daemon thread feeding a queue the response drains.
 **Handing one agent a task is not a special case** — it's a one-stage pipeline with
 `plan=False`. The console roster posts exactly that; there is no separate code path.
 
+**Events and endpoints are a public contract** (`contract/v1.json`,
+`docs/api-contract.md`), which the phone app is built against. Adding an event type or a
+field: add it to both, or `tests/test_contract.py` fails. Removing, renaming or retyping
+anything listed there needs contract 2 (`web.CONTRACT_VERSION`). After changing what the
+server sends, re-record `contract/examples/` with `contract/record.py`, against a scratch
+server, never your own (it runs the goal queue), and read the result before committing.
+
 **Display cleanup lives in `render.py`, once, upstream.** Tool-call arg dicts, JSON tool
 output, and tool calls a model fumbled into its text are cleaned before any consumer (chat
 pane, activity window, CLI) sees them. Never re-implement it in the view layer. It must

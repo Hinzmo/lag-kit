@@ -1,0 +1,116 @@
+{
+  "contract": 1,
+  "about": "What lag serve and its clients (the console, lag goals, the phone app) agree on. docs/api-contract.md explains it in words. Types are JSON types; 'a|b' means either. Clients ignore event types and fields they do not know, so the server may add both without a new contract version. Removing, renaming or retyping anything listed here needs contract 2.",
+
+  "events": {
+    "start":              {"app": true,  "fields": {"stages": "array", "loads": "integer"},
+                           "about": "A run begins. stages: [{name, model}] in run order; loads: cold model loads it will cost."},
+    "stage":              {"app": true,  "fields": {"name": "string", "model": "string", "loaded": "boolean"},
+                           "optional": {"role": "string"},
+                           "about": "A stage starts talking. loaded: true when its model had to be loaded cold. role: lead | stage."},
+    "thinking":           {"app": true,  "fields": {"text": "string"},
+                           "about": "A piece of the model's reasoning. Show it collapsed."},
+    "token":              {"app": true,  "fields": {"text": "string"},
+                           "about": "A piece of the answer, already cleaned for display."},
+    "tool":               {"app": true,  "fields": {"name": "string", "args": "object", "pretty": "string"},
+                           "about": "The model called a tool. pretty is the call as a person should read it."},
+    "tool_result":        {"app": true,  "fields": {"name": "string", "content": "string"},
+                           "about": "What the tool returned, cleaned and cut to 2,000 characters."},
+    "routing":            {"app": true,  "fields": {"lead": "string", "model": "string", "candidates": "array"},
+                           "about": "The orchestrator is choosing agents. candidates: agent names."},
+    "routed":             {"app": true,  "fields": {"lead": "string", "agents": "array", "loads": "integer"},
+                           "about": "The orchestrator chose. agents: [{name, model}] in run order."},
+    "route_fallback":     {"app": true,  "fields": {"agents": "array"},
+                           "about": "The orchestrator's choice could not be read; the default roster runs instead. agents: names."},
+    "trimmed":            {"app": true,  "fields": {"stage": "string", "model": "string", "window": "integer", "dropped_chars": "integer"},
+                           "about": "Earlier work was cut from the middle to fit this stage's budget."},
+    "no_tools":           {"app": true,  "fields": {"model": "string", "message": "string"},
+                           "about": "The model cannot call tools, so this turn runs without them."},
+    "turn_error":         {"app": true,  "fields": {"message": "string", "attempt": "integer"},
+                           "about": "One model turn failed and is being retried. Three in a row end the run."},
+    "final_answer_nudge": {"app": true,  "fields": {"max_iters": "integer"},
+                           "about": "Tool turns ran out; the model is asked to answer without tools."},
+    "shared_model":       {"app": true,  "fields": {"model": "string"},
+                           "about": "A goal is running, so this chat uses the goal's model to avoid a reload."},
+    "nudge":              {"app": true,  "fields": {"name": "string", "reason": "string"},
+                           "about": "A goal's last stage stopped to ask; it is sent back to decide for itself."},
+    "check":              {"app": true,  "fields": {"verdict": "string", "reason": "string"},
+                           "about": "The done-when check. verdict: met | not met | unchecked."},
+    "error":              {"app": true,  "fields": {"message": "string"},
+                           "about": "The run failed. The last event of its stream."},
+    "done":               {"app": true,  "fields": {}, "optional": {"answer": "string"},
+                           "about": "The run finished. answer: the final answer, when there is one."},
+    "goals":              {"app": true,  "fields": {"running": "boolean", "pausing": "boolean", "current": "string|null",
+                                                    "stage": "string", "awaiting": "string|null", "note": "string",
+                                                    "settings": "object", "goals": "array"},
+                           "about": "The whole goal queue. goals: see goal_record. settings: {plan, fail, model}."},
+
+    "agent_start":        {"app": false, "fields": {"goal": "string", "name": "string", "persona": "string", "model": "string",
+                                                    "cycle": "integer", "resumed": "boolean", "sandbox": "string"},
+                           "about": "Agent mode: a run begins."},
+    "cycle":              {"app": false, "fields": {"n": "integer", "model": "string", "goal": "string"},
+                           "about": "Agent mode: a cycle begins."},
+    "cycle_error":        {"app": false, "fields": {"n": "integer", "message": "string", "errors": "integer", "consecutive": "integer"},
+                           "about": "Agent mode: a cycle failed; the loop backs off and continues."},
+    "idle":               {"app": false, "fields": {"seconds": "integer"},
+                           "about": "Agent mode: pausing between cycles."},
+    "agent_done":         {"app": false, "fields": {"cycle": "integer", "summary": "string"},
+                           "about": "Agent mode: the agent marked its goal done."},
+    "agent_stop":         {"app": false, "fields": {"reason": "string", "cycle": "integer", "detail": "string"},
+                           "optional": {"last_error": "string"},
+                           "about": "Agent mode: the loop stopped. reason: busy | no_sandbox | max_cycles | stop_requested | failed_cycles | no_progress."},
+    "agent_end":          {"app": false, "fields": {"cycle": "integer", "done": "boolean", "summary": "string",
+                                                    "errors": "integer", "stopped_reason": "string"},
+                           "about": "Agent mode: the last event of a run."}
+  },
+
+  "goal_event": {
+    "about": "On /api/goals/events, every event of the running goal carries one extra field naming it.",
+    "fields": {"goal": "string"}
+  },
+
+  "goal_record": {
+    "about": "One goal, as it appears in a goals snapshot.",
+    "fields": {"id": "string", "text": "string", "done_when": "string", "agents": "array", "status": "string",
+               "route": "array", "answer": "string", "error": "string", "added": "string", "started": "string",
+               "finished": "string", "check": "string"},
+    "status": ["pending", "running", "done", "failed", "skipped"]
+  },
+
+  "errors": {
+    "about": "Every failure carries an error string. Check for it whatever the status: refused requests answer 4xx, but /api/run and goal edits answer 200 with error (plus the snapshot), and a stream's failure is its last event, type error.",
+    "fields": {"error": "string"}
+  },
+
+  "endpoints": {
+    "GET /api/version":            {"app": true,  "response": {"lag": "string", "contract": "integer"}},
+    "GET /api/state":              {"app": true,  "response": {"version": "string", "ollama": "object", "chat_model": "string",
+                                                               "num_ctx": "integer", "personas": "array", "tools": "array",
+                                                               "rag_tools": "array", "chroma": "object", "mcp": "object"}},
+    "POST /api/stream":            {"app": true,  "body": {"prompt": "string"},
+                                    "body_optional": {"mode": "string", "agents": "string|null", "plan": "boolean", "model": "string|null",
+                                                      "route": "boolean", "retrieval": "boolean", "mcp": "boolean"},
+                                    "response": "stream of events"},
+    "POST /api/run":               {"app": false, "body": {"prompt": "string"}, "response": {"answer": "string", "model": "string"}},
+    "GET /api/goals":              {"app": true,  "response": "goals event"},
+    "GET /api/goals/events":       {"app": true,  "response": "stream: goals events, plus the running goal's events with goal_event fields"},
+    "POST /api/goals":             {"app": true,  "body": {"text": "string"}, "body_optional": {"done_when": "string", "agents": "array"},
+                                    "response": "goals event"},
+    "DELETE /api/goals/{id}":      {"app": true,  "response": "goals event"},
+    "POST /api/goals/{id}/move":   {"app": true,  "query": {"delta": "integer"}, "response": "goals event"},
+    "POST /api/goals/{id}/retry":  {"app": true,  "response": "goals event"},
+    "POST /api/goals/run":         {"app": true,  "response": "goals event"},
+    "POST /api/goals/pause":       {"app": true,  "response": "goals event"},
+    "POST /api/goals/skip":        {"app": true,  "response": "goals event"},
+    "POST /api/goals/clear":       {"app": true,  "response": "goals event"},
+    "POST /api/goals/settings":    {"app": true,  "body_optional": {"plan": "boolean", "fail": "string", "model": "string"},
+                                    "response": "goals event"},
+    "POST /api/pair":              {"app": true,  "phone_port_only": true, "no_key": true, "body": {"code": "string"},
+                                    "body_optional": {"name": "string"}, "response": {"key": "string", "device": "object"}},
+    "GET /api/devices":            {"app": true,  "response": {"devices": "array", "you": "string|null"}}
+  },
+
+  "phone_port": {
+    "about": "lag serve --phone-port. Every request needs 'Authorization: Bearer <device key>' except POST /api/pair. 401: no key, or not paired / revoked. 403: the key belongs to another Tailscale user, or a cross-site request."
+  }
+}

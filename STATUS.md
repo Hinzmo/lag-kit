@@ -7,7 +7,7 @@ what's left. Working rules for Claude Code live in `CLAUDE.md`.
 
 ## Where it stands
 
-The six original phases are done, and the kit has grown well past them. **595 tests pass**
+The six original phases are done, and the kit has grown well past them. **609 tests pass**
 with Docker running (four real-container tests skip without it). Primary box is the **MacBook Air M4**;
 the CPU-only Ubuntu machine it was built on is secondary.
 
@@ -223,6 +223,18 @@ Verified live 2026-11-08: pair over curl, key accepted, code single-use, a phone
 `uname -s` answered `Linux` from the container, revoke cut the key off at once, and Ctrl-C
 stopped both listeners and removed the containers.
 
+### API contract (`contract/`, `docs/api-contract.md`)
+
+What `lag serve` promises clients, in words (`docs/api-contract.md`) and as data
+(`contract/v1.json`): 26 event types with their fields, the goal record, the endpoints the
+phone app calls, and the error rule (always an `error` string; 4xx for refusals, 200 for
+`/api/run` and goal edits, a final `error` event in a stream). `GET /api/version` returns
+`{lag, contract}`. `contract/examples/` holds streams recorded through the phone port of a
+real server (`contract/record.py`), scrubbed of the home path, the key and the model list.
+`tests/test_contract.py` fails if the code sends an event the contract lacks, the contract
+lists one nothing sends, an example drifts from the contract, an endpoint's shape changes,
+or the doc stops naming something.
+
 ### Study mode
 
 `lag study add | ask | quiz | cards | review | status`. Each course is its own Chroma
@@ -314,7 +326,7 @@ list live from Ollama.
    lists installed tags, their capabilities and which roles use them.
 3. For development add the test extras: `.venv/bin/python -m pip install -e ".[dev]"`.
 4. Start **Docker Desktop** if you want agent mode (and the 2 sandbox tests).
-5. `.venv/bin/python -m pytest` — expect 595 passing with Docker running; without it, 4 real-container tests skip.
+5. `.venv/bin/python -m pytest` — expect 609 passing with Docker running; without it, 4 real-container tests skip.
    `cd tests/js && npm install` enables the console boot test.
 
 ```bash
