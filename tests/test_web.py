@@ -51,13 +51,15 @@ def test_run_surfaces_errors_as_a_message(monkeypatch):
 
 
 def test_state_reports_the_window_the_chat_model_actually_gets(monkeypatch):
-    """With num_ctx_by_model the global default is not what the orchestrator runs at."""
+    """Chat runs on the worker, at the worker's own window — not the orchestrator's,
+    and not the global default."""
     from lag import web
 
     cfg = {
         "ollama_base_url": "http://x",
         "models": {"orchestrator": "wide:9b", "worker": "narrow:8b"},
-        "ollama": {"num_ctx": 8192, "num_ctx_by_model": {"wide:9b": 131072}},
+        "ollama": {"num_ctx": 8192,
+                   "num_ctx_by_model": {"wide:9b": 131072, "narrow:8b": 32768}},
         "paths": {"personas": "./personas"},
     }
     monkeypatch.setattr(web, "load_config", lambda: cfg)
@@ -66,8 +68,8 @@ def test_state_reports_the_window_the_chat_model_actually_gets(monkeypatch):
     monkeypatch.setattr(web, "_chroma_count", lambda c: 0)
 
     d = web.state()
-    assert d["chat_model"] == "wide:9b"
-    assert d["num_ctx"] == 131072
+    assert d["chat_model"] == "narrow:8b"
+    assert d["num_ctx"] == 32768
 
 
 class TestSavedAgents:
@@ -358,3 +360,155 @@ def test_chat_keeps_its_model_when_no_goal_runs(monkeypatch):
     monkeypatch.setitem(web._goal_runner_cache, "runner", NS(current=None, model=""))
     client.post("/api/stream", json={"prompt": "hi", "mode": "solo", "model": "other:7b"})
     assert seen["model"] == "other:7b"
+
+
+class TestOnlyKnownCallers:
+    """127.0.0.1 keeps other machines out, not other web pages. A page whose name was
+    re-pointed at 127.0.0.1 (DNS rebinding) arrives with its own name in Host; a page
+    posting a form here arrives with its own Origin."""
+
+    @pytest.fixture(autouse=True)
+    def _agents_dir(self, tmp_path, monkeypatch):
+        from lag import agent as agent_mod
+        monkeypatch.setattr(agent_mod, "AGENT_DIR", tmp_path / "agents")
+        monkeypatch.setattr(web, "_extra_hosts", set())
+
+    def test_an_unknown_host_is_refused(self):
+        r = TestClient(web.app, base_url="http://rebound.example:8765").get("/")
+        assert r.status_code == 403 and "not allowed" in r.json()["error"]
+
+    @pytest.mark.parametrize("host", ["127.0.0.1:8765", "localhost:8765", "[::1]:8765",
+                                      "LOCALHOST"])
+    def test_loopback_names_are_served(self, host):
+        # Set as a header: the test client cannot parse a bracketed IPv6 base URL.
+        assert client.get("/", headers={"host": host}).status_code == 200
+
+    def test_a_bind_address_can_be_added(self):
+        web.allow_host("100.64.0.7")
+        assert TestClient(web.app, base_url="http://100.64.0.7:8765").get("/").status_code == 200
+
+    def test_a_cross_site_post_is_refused_and_does_nothing(self, tmp_path):
+        r = client.post("/api/agent/stop?name=x", headers={"Origin": "http://evil.example"})
+        assert r.status_code == 403
+        assert not (tmp_path / "agents" / "x.stop").exists()
+
+    def test_a_null_origin_is_refused(self):
+        r = client.post("/api/agent/stop?name=x", headers={"Origin": "null"})
+        assert r.status_code == 403
+
+    def test_the_console_itself_may_post(self, tmp_path):
+        r = client.post("/api/agent/stop?name=x", headers={"Origin": "http://testserver"})
+        assert r.status_code == 200
+        assert (tmp_path / "agents" / "x.stop").exists()
+
+    def test_a_post_with_no_origin_is_not_from_a_page(self):
+        """curl and `lag goals` send no Origin."""
+        assert client.post("/api/agent/stop?name=x").status_code == 200
+
+    def test_cross_site_reads_are_left_to_the_browser(self):
+        """A GET is not refused, but nothing grants a foreign page the right to read it."""
+        r = client.get("/", headers={"Origin": "http://evil.example"})
+        assert r.status_code == 200
+        assert "access-control-allow-origin" not in r.headers
+
+
+class TestRunNamesAreRefusedUpFront:
+    @pytest.fixture(autouse=True)
+    def _agents_dir(self, tmp_path, monkeypatch):
+        from lag import agent as agent_mod
+        monkeypatch.setattr(agent_mod, "AGENT_DIR", tmp_path / "agents")
+
+    def test_start_refuses_a_path_name_before_claiming_the_lock(self):
+        r = client.post("/api/agent/start", json={"goal": "g", "name": "../../.."})
+        assert r.status_code == 400 and "invalid agent name" in r.json()["error"]
+        assert not web._RUNNING
+
+    def test_stop_refuses_a_path_name(self, tmp_path):
+        r = client.post("/api/agent/stop?name=../../x")
+        assert r.status_code == 400
+        assert not list(tmp_path.rglob("*.stop"))
+
+    def test_status_for_a_path_name_is_simply_absent(self):
+        assert client.get("/api/agent/status?name=../../x").json()["exists"] is False
+
+
+class TestSharedObjectsAreBuiltOnce:
+    """The warm-up thread, chat requests and the goal runner build these from separate
+    threads. Unlocked, two could each build one and the cache kept only the last."""
+
+    def test_concurrent_requests_build_one_provider(self, monkeypatch):
+        import threading
+        import time
+
+        from lag import mcp_client
+
+        built = []
+
+        class SlowProvider:
+            alive = True
+
+            @classmethod
+            def from_config(cls, cfg):
+                built.append(1)
+                time.sleep(0.2)                 # starting two servers takes a while
+                return cls()
+
+        monkeypatch.setattr(mcp_client, "MCPToolProvider", SlowProvider)
+        monkeypatch.setattr(web, "_provider_cache", {})
+        got = []
+        threads = [threading.Thread(target=lambda: got.append(web._provider({}, True)))
+                   for _ in range(4)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        assert len(built) == 1 and len({id(p) for p in got}) == 1
+
+    def test_a_dead_provider_is_replaced(self, monkeypatch):
+        from lag import mcp_client
+
+        closed = []
+
+        class Provider:
+            def __init__(self):
+                self.alive = True
+
+            @classmethod
+            def from_config(cls, cfg):
+                return cls()
+
+            def close(self):
+                closed.append(self)
+
+        monkeypatch.setattr(mcp_client, "MCPToolProvider", Provider)
+        monkeypatch.setattr(web, "_provider_cache", {})
+        first = web._provider({}, True)
+        first.alive = False                     # a server died
+        second = web._provider({}, True)
+        assert second is not first and closed == [first]
+
+    def test_concurrent_requests_build_one_goal_runner(self, monkeypatch):
+        import threading
+        import time
+
+        from lag import goals
+
+        built = []
+
+        class SlowRunner:
+            def __init__(self, execute):
+                built.append(1)
+                time.sleep(0.2)
+
+        monkeypatch.setattr(goals, "GoalRunner", SlowRunner)
+        monkeypatch.setattr(goals, "pipeline_executor", lambda cfg, f: None)
+        monkeypatch.setattr(web, "load_config", dict)
+        monkeypatch.setattr(web, "_goal_runner_cache", {})
+        got = []
+        threads = [threading.Thread(target=lambda: got.append(web._goal_runner()))
+                   for _ in range(4)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        assert len(built) == 1 and len({id(r) for r in got}) == 1

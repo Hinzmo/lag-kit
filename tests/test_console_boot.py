@@ -171,3 +171,38 @@ def test_the_model_harness_catches_a_watch_left_open_in_a_hidden_tab(tmp_path):
     broken.write_text(src.replace(fixed, "watchModels()"))
     r = _run(broken, MODELS_HARNESS)
     assert r.returncode != 0 and "hidden tab kept" in (r.stderr + r.stdout)
+
+
+SAFETY_HARNESS = JS_DIR / "render_safety.js"
+
+
+@needs_jsdom
+def test_model_text_never_becomes_markup():
+    """Hostile links, tool names and stage names stream through a chat turn; none may
+    reach the page as markup. The console shares an origin with /api/stream."""
+    r = _run(CONSOLE, SAFETY_HARNESS)
+    assert r.returncode == 0, "render safety:\n" + (r.stderr or r.stdout)
+
+
+@needs_jsdom
+def test_the_safety_harness_catches_the_href_quote(tmp_path):
+    """Put the shipped bug back (quotes not escaped in mdRender) and it must fail."""
+    broken = tmp_path / "console.html"
+    src = CONSOLE.read_text()
+    fixed = """  const esc0 = s => s.replace(/[&<>"']/g,"""
+    assert fixed in src
+    broken.write_text(src.replace(fixed, """  const esc0 = s => s.replace(/[&<>]/g,"""))
+    r = _run(broken, SAFETY_HARNESS)
+    assert r.returncode != 0 and "a link gained attributes" in (r.stderr + r.stdout)
+
+
+@needs_jsdom
+def test_the_safety_harness_catches_a_raw_tool_name(tmp_path):
+    """Put the shipped bug back (the drawer's tag unescaped) and it must fail."""
+    broken = tmp_path / "console.html"
+    src = CONSOLE.read_text()
+    fixed = '<span class="vb-tag">${esc(tag)}</span>'
+    assert fixed in src
+    broken.write_text(src.replace(fixed, '<span class="vb-tag">${tag}</span>'))
+    r = _run(broken, SAFETY_HARNESS)
+    assert r.returncode != 0 and "IMG" in (r.stderr + r.stdout)

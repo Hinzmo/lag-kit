@@ -60,7 +60,7 @@ class Pipeline:
     def from_personas(cls, names: list[str], cfg: dict, tool_provider=None,
                       model_override: str | None = None):
         host = cfg["ollama_base_url"]
-        provider = tool_provider or LocalToolProvider()
+        provider = tool_provider or LocalToolProvider.from_config(cfg)
         stages = [Agent(load_persona(n, cfg), cfg, provider, model_override)
                   for n in names]
         return cls(stages, host)
@@ -92,7 +92,7 @@ class Pipeline:
         Falls back to the configured default roster if the model returns something
         unusable: a bad route should degrade to the old behaviour, never to a crash.
         """
-        provider = tool_provider or LocalToolProvider()
+        provider = tool_provider or LocalToolProvider.from_config(cfg)
         host = cfg["ollama_base_url"]
         lead_name = lead_name or cls._default_names(cfg)[0]
         roster = cls._roster(cfg, exclude=lead_name)

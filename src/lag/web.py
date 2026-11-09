@@ -98,21 +98,89 @@ async def _lifespan(_app):
 app = FastAPI(title="lag console", lifespan=_lifespan)
 
 
+# ── who may talk to the console ───────────────────────────────────────────────
+# Binding to 127.0.0.1 keeps other machines out, but not other web pages. Two ways in:
+#   DNS rebinding  a hostile page re-points its own name at 127.0.0.1, after which the
+#                  browser treats the console as same-origin with it. The browser still
+#                  sends the page's name in Host, so only known names are served.
+#   cross-site     any page can POST a form here. A form needs no CORS permission, and
+#     POSTs        the query-only routes (stop, pause, skip, clear) act on it unseen.
+#                  Browsers always send Origin on a POST, so one that does not match
+#                  the Host it was sent to is refused.
+# Requests with no Origin (curl, `lag goals`) are not from a web page and pass.
+_LOCAL_HOSTS = {"127.0.0.1", "localhost", "::1"}
+_extra_hosts: set[str] = set()
+
+
+def allow_host(name: str) -> None:
+    """Serve requests addressed to `name` too: a bind address or a tailnet name."""
+    if name and name not in ("0.0.0.0", "::"):
+        _extra_hosts.add(name.strip("[]").lower())
+
+
+def allowed_hosts() -> set[str]:
+    env = {h.strip().lower() for h in os.environ.get("LAG_ALLOWED_HOSTS", "").split(",")}
+    return _LOCAL_HOSTS | _extra_hosts | (env - {""})
+
+
+def _hostname(netloc: str) -> str:
+    from urllib.parse import urlsplit
+    try:
+        return (urlsplit("//" + netloc).hostname or "").lower()
+    except ValueError:
+        return ""
+
+
+_SAFE_METHODS = ("GET", "HEAD", "OPTIONS")
+
+
+@app.middleware("http")
+async def _only_known_callers(request: Request, call_next):
+    host = request.headers.get("host", "")
+    if _hostname(host) not in allowed_hosts():
+        return JSONResponse(status_code=403, content={
+            "error": f"host {host!r} is not allowed; add it with "
+                     "`lag serve --allow-host NAME` or LAG_ALLOWED_HOSTS"})
+    origin = request.headers.get("origin")
+    if (request.method not in _SAFE_METHODS and origin is not None
+            and origin.split("://", 1)[-1].lower() != host.lower()):
+        return JSONResponse(status_code=403, content={
+            "error": f"cross-site request from {origin!r} refused"})
+    return await call_next(request)
+
+
 def _without_retrieval(provider):
     """The provider minus the knowledge base."""
     return ToolsExcept(provider, ["search_knowledge_base"])
 
 
+# One lock for building providers. The startup warm-up, chat requests and the goal
+# runner each call _provider from their own thread; unlocked, two of them could each
+# start a full set of MCP servers and the cache kept only one, stranding the other's
+# subprocesses past shutdown.
+_provider_lock = threading.Lock()
+
+
 def _provider(cfg: dict, mcp: bool):
     key = "mcp" if mcp else "local"
-    if key not in _provider_cache:
-        if mcp:
-            from .mcp_client import MCPToolProvider
+    with _provider_lock:
+        cached = _provider_cache.get(key)
+        if cached is not None and not getattr(cached, "alive", True):
+            # A server died. Replace the provider rather than answer every later
+            # request with "server stopped" until lag serve is restarted.
+            _provider_cache.pop(key)
+            with contextlib.suppress(Exception):
+                cached.close()
+            cached = None
+        if cached is None:
+            if mcp:
+                from .mcp_client import MCPToolProvider
 
-            _provider_cache[key] = MCPToolProvider.from_config(cfg)
-        else:
-            _provider_cache[key] = LocalToolProvider()
-    return _provider_cache[key]
+                cached = MCPToolProvider.from_config(cfg)
+            else:
+                cached = LocalToolProvider.from_config(cfg)
+            _provider_cache[key] = cached
+        return cached
 
 
 # ── status helpers (separated so tests can stub them without touching Ollama) ──
@@ -252,10 +320,12 @@ def state():
     cfg = load_config()
     up, available, loaded = _ollama_status(cfg)
     models = cfg.get("models", {}) or {}
-    chat_model = models.get("orchestrator") or models.get("worker") or ""
+    # Chat runs on the worker (see /api/stream and _warm), so that is the model to name.
+    # Naming the orchestrator showed a model and window the chat was not using.
+    chat_model = models.get("worker") or models.get("orchestrator") or ""
     # Report the window this model actually gets, not the global default — with
-    # num_ctx_by_model the two differ by 16x here, and the console showing 8192 next
-    # to a 131072 orchestrator would be a lie about the running system.
+    # num_ctx_by_model the two can differ by 16x, and showing the wrong one would be a
+    # lie about the running system.
     o = cfg.get("ollama", {}) or {}
     num_ctx = (o.get("num_ctx_by_model") or {}).get(chat_model, o.get("num_ctx", 4096))
     return {
@@ -497,6 +567,21 @@ def _busy() -> str | None:
     return held.get("name", "another agent") if held else None
 
 
+def _bad_name(name: str) -> JSONResponse | None:
+    """A 400 for a run name that could not be a file name, before anything is claimed.
+
+    Names become the state file, the stop file and the sandbox workspace. Checked here
+    so the console gets a plain refusal rather than a stream that dies on its first
+    event."""
+    from .agent import _check_name
+
+    try:
+        _check_name(name)
+    except ValueError as e:
+        return JSONResponse(status_code=400, content={"error": str(e)})
+    return None
+
+
 @app.post("/api/agent/start")
 def agent_start(req: AgentRequest):
     """Start agent mode and stream its cycles until it finishes or is stopped.
@@ -509,6 +594,9 @@ def agent_start(req: AgentRequest):
 
     cfg = load_config()
     run_name = req.saved or req.name
+    bad = _bad_name(run_name)
+    if bad:
+        return bad
     # Check and claim in one step. 409 (Conflict) rather than a 200 carrying an error:
     # the console reads a 200 as the start of an event stream, found no events in
     # it, and showed nothing at all.
@@ -579,6 +667,9 @@ def agent_stop(name: str = "default"):
     """Ask the agent to stop after its current cycle."""
     from .agent import stop_path
 
+    bad = _bad_name(name)
+    if bad:
+        return bad
     p = stop_path(name)
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text("stop")
@@ -692,14 +783,21 @@ def agents_delete(name: str):
 _goal_runner_cache: dict = {}
 
 
+_goal_runner_lock = threading.Lock()
+
+
 def _goal_runner():
     from .goals import GoalRunner, pipeline_executor
 
-    if "runner" not in _goal_runner_cache:
-        cfg = load_config()
-        _goal_runner_cache["runner"] = GoalRunner(
-            pipeline_executor(cfg, lambda: _provider(cfg, True)))
-    return _goal_runner_cache["runner"]
+    # Locked: the console asks for the goal list and opens the goal event stream at
+    # the same moment, on two threads. Unlocked, each could build a runner, and the
+    # stream would watch one while every edit went to the other.
+    with _goal_runner_lock:
+        if "runner" not in _goal_runner_cache:
+            cfg = load_config()
+            _goal_runner_cache["runner"] = GoalRunner(
+                pipeline_executor(cfg, lambda: _provider(cfg, True)))
+        return _goal_runner_cache["runner"]
 
 
 def _goal_edit(fn):

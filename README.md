@@ -180,6 +180,12 @@ Pick models that support tools (`lag models` shows which do).
   `http_fetch` only allows public addresses and re-checks every redirect.
 - **Sandboxed agents reach the public internet by default**, through the proxy. Create
   an agent with `--no-network` to seal it.
+- **The console answers only to names it knows.** `lag serve` serves `localhost`,
+  `127.0.0.1`, `::1` and its bind address, and refuses any POST whose `Origin` is another
+  site. That keeps other web pages out, including by DNS rebinding. To reach it by
+  another name, such as a tailnet name, add `--allow-host NAME`.
+- **Model output is shown as text.** Answers, tool names and agent names are escaped
+  before the console renders them, because a fetched page can steer what a model writes.
 
 ## Tests
 

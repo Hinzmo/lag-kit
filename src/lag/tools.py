@@ -113,6 +113,20 @@ def remember(key: str, value: str) -> str:
     return f"remembered '{key}'{note}"
 
 
+# The embedder remember() indexes with. Empty means rag's defaults. Set from config by
+# LocalToolProvider.from_config in-process, and by tools_server.py's flags over MCP.
+_EMBED: dict = {}
+
+
+def use_embedder(model: str | None = None, host: str | None = None) -> None:
+    """Index remembered facts with this embed model and Ollama host."""
+    _EMBED.clear()
+    if model:
+        _EMBED["model"] = model
+    if host:
+        _EMBED["host"] = host
+
+
 def _index_memory(key: str, value: str) -> str:
     """Mirror a remembered fact into the vector store. Never raises."""
     try:
@@ -120,7 +134,7 @@ def _index_memory(key: str, value: str) -> str:
     except ImportError:
         return " (not indexed: retrieval extra not installed — pip install -e '.[rag]')"
     try:
-        n = rag.index_note(key, value)
+        n = rag.index_note(key, value, **_EMBED)
     except Exception as e:  # noqa: BLE001 - degrade, never break the loop
         return f" (not indexed: {type(e).__name__})"
     return f" · indexed {n} chunk(s) into the knowledge base" if n else ""
@@ -509,6 +523,14 @@ class LocalToolProvider:
 
     def __init__(self, functions: dict | None = None):
         self.functions = functions or TOOLS
+
+    @classmethod
+    def from_config(cls, cfg: dict, functions: dict | None = None) -> "LocalToolProvider":
+        """The in-process tools, with remember() indexing via the configured embedder."""
+        from .config import embed_settings
+
+        use_embedder(**embed_settings(cfg))
+        return cls(functions)
 
     def schemas(self):
         # Ollama derives the JSON schema from each function's signature and

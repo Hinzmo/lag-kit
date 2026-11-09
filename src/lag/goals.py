@@ -496,16 +496,21 @@ class GoalRunner:
 
 
 def judge_chat(cfg: dict, model: str):
-    """One tool-free, non-thinking call on `model`, for check_done."""
-    import ollama
-    client = ollama.Client(host=cfg.get("ollama_base_url", "http://127.0.0.1:11434"))
-    num_ctx = ((cfg.get("ollama") or {}).get("num_ctx_by_model") or {}).get(
-        model, (cfg.get("ollama") or {}).get("num_ctx", 8192))
+    """One tool-free, non-thinking call on `model`, for check_done.
+
+    Built with OllamaClient.from_config like every other call, so it sends the same
+    num_ctx and keep_alive as the stage that just ran. A different window would reload
+    the model, and a missing keep_alive reset it to Ollama's 5-minute default.
+    """
+    from .ollama_client import OllamaClient
+
+    oc = OllamaClient.from_config(cfg, model, think=False)
+    kw = oc._chat_kwargs()
+    kw["options"] = {**kw.get("options", {}), "num_predict": 200, "temperature": 0}
 
     def chat(prompt: str) -> str:
-        r = client.chat(model=model, messages=[{"role": "user", "content": prompt}],
-                        think=False, options={"num_ctx": num_ctx, "num_predict": 200,
-                                              "temperature": 0})
+        r = oc.client.chat(model=model, messages=[{"role": "user", "content": prompt}],
+                           **kw)
         return r.message.content or ""
     return chat
 

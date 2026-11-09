@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import threading
 import time
+from types import SimpleNamespace
 
 import pytest
 
@@ -614,3 +615,36 @@ def test_the_runner_tracks_the_running_stages_model(tmp_path):
     r.run()
     wait_for(lambda: statuses(r) == ["done"])
     assert seen == ["gemma4:e4b"] and r.model == ""   # cleared once the goal ends
+
+
+class TestJudgeChatMatchesTheStage:
+    """The done-when check runs on the model the last stage left resident. It built a
+    raw client: no keep_alive (reset to Ollama's 5 minutes) and a guessed num_ctx
+    (a different window reloads the model)."""
+
+    def _sent(self, monkeypatch, cfg):
+        import lag.ollama_client as oc
+        oc._CAPS.clear()
+        sent = {}
+
+        class FakeClient:
+            def __init__(self, host=None): pass
+            def show(self, model): return SimpleNamespace(capabilities=["completion"])
+            def chat(self, **kw):
+                sent.update(kw)
+                return SimpleNamespace(message=SimpleNamespace(content="MET"))
+
+        monkeypatch.setattr(oc.ollama, "Client", FakeClient)
+        assert goals_mod.judge_chat(cfg, "m:1")("is it done?") == "MET"
+        return sent
+
+    def test_it_keeps_the_model_resident(self, monkeypatch):
+        sent = self._sent(monkeypatch, {"ollama": {"keep_alive": "30m", "num_ctx": 4096}})
+        assert sent["keep_alive"] == "30m"
+        assert sent["options"]["num_ctx"] == 4096
+        assert sent["options"]["num_predict"] == 200 and sent["options"]["temperature"] == 0
+
+    def test_no_window_is_invented(self, monkeypatch):
+        """No num_ctx in config means no num_ctx sent — the same as the stage did."""
+        sent = self._sent(monkeypatch, {})
+        assert "num_ctx" not in sent["options"]

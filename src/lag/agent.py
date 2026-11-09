@@ -70,7 +70,7 @@ _SAFE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
 def _check_name(name: str) -> str:
     """Names become file paths, so refuse anything that could escape the directory."""
-    if not _SAFE_NAME.match(name or ""):
+    if not _SAFE_NAME.fullmatch(name or ""):
         raise ValueError(
             f"invalid agent name {name!r}: use letters, digits, dot, dash, underscore")
     return name
@@ -113,6 +113,12 @@ class GoalSpec:
     # template. An unknown name here is a typo that would silently remove a tool, so
     # it is reported rather than ignored.
     tools: list[str] = field(default_factory=list)
+
+    def __post_init__(self):
+        # The name becomes the state file, the stop file and the sandbox workspace, so
+        # check it here. Checking only on save let an unsaved run named '../../..' get
+        # the home folder mounted read-write as its workspace.
+        _check_name(self.name)
 
     # ── persistence ──────────────────────────────────────────────────────────
     @classmethod
@@ -220,7 +226,7 @@ class AgentState:
 
     @property
     def path(self) -> Path:
-        return AGENT_DIR / f"{self.spec.get('name', 'default')}.state.json"
+        return AGENT_DIR / f"{_check_name(self.spec.get('name', 'default'))}.state.json"
 
     def save(self) -> None:
         self.updated = datetime.datetime.now().astimezone().isoformat(timespec="seconds")
@@ -229,6 +235,8 @@ class AgentState:
 
     @classmethod
     def load(cls, name: str) -> "AgentState | None":
+        if not _SAFE_NAME.fullmatch(name or ""):
+            return None                   # no valid run could have written it
         f = AGENT_DIR / f"{name}.state.json"
         if not f.exists():
             return None
@@ -265,7 +273,7 @@ class GoalToolsLocal(ProviderWrapper):
 
 def stop_path(name: str) -> Path:
     """Touch this file to ask a running agent to stop after its current cycle."""
-    return AGENT_DIR / f"{name}.stop"
+    return AGENT_DIR / f"{_check_name(name)}.stop"
 
 
 # ── one agent at a time ─────────────────────────────────────────────────────────
@@ -344,7 +352,7 @@ class AgentLoop:
             read_root=Path.cwd(),
             network=spec.network,
         )
-        provider = SandboxedProvider(tool_provider or LocalToolProvider(), self.sandbox)
+        provider = SandboxedProvider(tool_provider or LocalToolProvider.from_config(cfg), self.sandbox)
         # Empty allow-list means every tool, so an agent with no `tools:` set is
         # unrestricted and the wrapper is skipped entirely.
         if spec.tools:
