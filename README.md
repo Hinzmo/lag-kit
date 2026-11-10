@@ -11,11 +11,10 @@ server. Unattended work runs in a locked-down container with a filtering egress 
 
 ## What it does
 
-- **Goal queue.** Write what should get done, plus an optional "done when". The
-  orchestrator reads each goal, picks which specialist agents should handle it, briefs
-  them, and works through the queue one goal at a time. It runs on the server, so it keeps
-  going with the browser closed. Agents decide rather than stall: an answer that ends on
-  a question is sent back to choose and finish. A goal only counts as done once its answer
+- **Goal queue.** Write what you want done in detail (be as detailed as possible) in the description, "done when" should should be ve very direct and clear, which is important to the agent so it has an obvious goal and stopping point.
+  orchestrator reads each goal, picks which specialist agents should handle it, briefs them, and works through the queue one goal at a time. It runs on the server, so it keeps
+ going with the browser closed. Agents decide rather than stall: an answer that ends on
+a question is sent back to choose and finish. A goal only counts as done once its answer
   is checked against "done when". `lag goals` drives the same queue from the terminal.
 - **Live console** (`lag serve`). Streams every stage's thinking, tool calls and answer
   as they happen. A separate activity window keeps the raw trace.
