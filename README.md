@@ -11,7 +11,7 @@ server. Unattended work runs in a locked-down container with a filtering egress 
 
 ## What it does
 
-- **Goal queue.** Write what you want done in detail (be as detailed as possible) in the description, "done when" should should be ve very direct and clear, which is important to the agent so it has an obvious goal and stopping point.
+- **Goal queue.** Write what you want done in detail (be as detailed as possible) in the description, "done when" should be very direct and clear, Its important to the agent so it has an obvious goal and stopping point.
   orchestrator reads each goal, picks which specialist agents should handle it, briefs them, and works through the queue one goal at a time. It runs on the server, so it keeps
  going with the browser closed. Agents decide rather than stall: an answer that ends on
 a question is sent back to choose and finish. A goal only counts as done once its answer
